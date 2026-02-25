@@ -161,7 +161,7 @@ function hasAnyPlayerData(p: PlayerForm) {
  * UI -> DB (date)
  * - accepte "JJ/MM/AAAA" et "YYYY-MM-DD"
  * - renvoie "YYYY-MM-DD" ou null si vide
- * - si format invalide -> renvoie undefined (on pourra afficher une erreur)
+ * - si format invalide -> renvoie undefined
  */
 function normalizeBirthDateToISO(input: string): string | null | undefined {
   const s = clean(input);
@@ -307,7 +307,8 @@ export default function TeamSheetPage() {
       }
 
       // joueurs
-      let pRes = await supabase
+      // ✅ FIX BUILD: pRes typé en any pour autoriser fallback sans birth_date (sinon TS bloque en build)
+      let pRes: any = await supabase
         .from("players")
         .select("id,team_id,first_name,last_name,jersey_number,license_number,birth_date")
         .eq("tournament_id", tournamentId)
@@ -353,7 +354,12 @@ export default function TeamSheetPage() {
         birth_date: displayBirthDate((p as any)?.birth_date ?? ""),
       }));
 
-      setPlayerForms(ensureFormsLength(forms, tRow.max_players_per_team && tRow.max_players_per_team > 0 ? tRow.max_players_per_team : 7));
+      setPlayerForms(
+        ensureFormsLength(
+          forms,
+          tRow.max_players_per_team && tRow.max_players_per_team > 0 ? tRow.max_players_per_team : 7
+        )
+      );
 
       // staff
       const sArr = (teamRes.data as any)?.staff;
@@ -405,7 +411,8 @@ export default function TeamSheetPage() {
   }
 
   async function reloadPlayers() {
-    let pRes = await supabase
+    // ✅ FIX BUILD: any pour permettre fallback
+    let pRes: any = await supabase
       .from("players")
       .select("id,team_id,first_name,last_name,jersey_number,license_number,birth_date")
       .eq("tournament_id", tournamentId)
@@ -606,13 +613,7 @@ export default function TeamSheetPage() {
     const rowsPlayers = Array.from({ length: maxPlayers }).map((_, i) => {
       const p = playerForms[i] ?? emptyPlayerForm();
       const lic = p.no_license ? "Pas de licence" : clean(p.license_number);
-      return [
-        clean(p.jersey_number),
-        clean(p.last_name),
-        clean(p.first_name),
-        lic,
-        clean(p.birth_date),
-      ];
+      return [clean(p.jersey_number), clean(p.last_name), clean(p.first_name), lic, clean(p.birth_date)];
     });
 
     autoTable(doc, {
@@ -662,10 +663,7 @@ export default function TeamSheetPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="max-w-6xl mx-auto space-y-4">
-        <div
-          className="rounded-xl shadow p-6"
-          style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, color: "white" }}
-        >
+        <div className="rounded-xl shadow p-6" style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, color: "white" }}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="text-sm opacity-90 truncate">
