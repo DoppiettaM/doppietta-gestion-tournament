@@ -14,6 +14,13 @@ function clampInt(v: string, fallback: number) {
   return Number.isFinite(n) ? Math.floor(n) : fallback;
 }
 
+function normalizeTextArray(arr: string[], size: number, defaultPrefix: string) {
+  const next = [...arr];
+  while (next.length < size) next.push(`${defaultPrefix} ${next.length + 1}`);
+  while (next.length > size) next.pop();
+  return next.map((s, i) => (String(s ?? "").trim() ? String(s).trim() : `${defaultPrefix} ${i + 1}`));
+}
+
 export default function CreateTournamentPage() {
   const router = useRouter();
 
@@ -36,6 +43,11 @@ export default function CreateTournamentPage() {
   const [minPlayersPerTeam, setMinPlayersPerTeam] = useState<string>("6");
   const [maxPlayersPerTeam, setMaxPlayersPerTeam] = useState<string>("7");
 
+  // Format
+  const [format, setFormat] = useState<string>("round_robin");
+  const [groupCount, setGroupCount] = useState<string>("2"); // 1..8 si poules
+  const [groupNames, setGroupNames] = useState<string[]>(["Poule 1", "Poule 2"]);
+
   // Pauses
   const [globalPauseFrom, setGlobalPauseFrom] = useState("");
   const [globalPauseTo, setGlobalPauseTo] = useState("");
@@ -44,19 +56,13 @@ export default function CreateTournamentPage() {
   const [exceptPauseTo, setExceptPauseTo] = useState("");
   const [exceptFieldsCsv, setExceptFieldsCsv] = useState(""); // "1,3"
 
-  // pauses par terrain: { "1": [{from,to}], "2": [...] }
   const [fieldPauses, setFieldPauses] = useState<Record<string, Pause[]>>({});
 
   const fieldCount = useMemo(() => Math.max(1, clampInt(numFields, 1)), [numFields]);
 
   // Maintenir fieldNames à la bonne taille
   useEffect(() => {
-    setFieldNames((prev) => {
-      const next = [...prev];
-      while (next.length < fieldCount) next.push(`Terrain ${next.length + 1}`);
-      while (next.length > fieldCount) next.pop();
-      return next;
-    });
+    setFieldNames((prev) => normalizeTextArray(prev, fieldCount, "Terrain"));
   }, [fieldCount]);
 
   // Maintenir fieldPauses à la bonne taille
@@ -66,7 +72,6 @@ export default function CreateTournamentPage() {
       for (let f = 1; f <= fieldCount; f++) {
         if (!next[String(f)]) next[String(f)] = [];
       }
-      // supprimer clés inutiles
       for (const k of Object.keys(next)) {
         const idx = Number(k);
         if (!Number.isFinite(idx) || idx < 1 || idx > fieldCount) delete next[k];
@@ -75,8 +80,27 @@ export default function CreateTournamentPage() {
     });
   }, [fieldCount]);
 
+  // Maintenir groupNames à la bonne taille (quand format=poules)
+  const gc = useMemo(() => {
+    const n = clampInt(groupCount, 2);
+    return Math.min(8, Math.max(1, n));
+  }, [groupCount]);
+
+  useEffect(() => {
+    if (format !== "groups_round_robin") return;
+    setGroupNames((prev) => normalizeTextArray(prev, gc, "Poule"));
+  }, [format, gc]);
+
   function updateFieldName(i: number, v: string) {
     setFieldNames((prev) => {
+      const next = [...prev];
+      next[i] = v;
+      return next;
+    });
+  }
+
+  function updateGroupName(i: number, v: string) {
+    setGroupNames((prev) => {
       const next = [...prev];
       next[i] = v;
       return next;
@@ -140,6 +164,7 @@ export default function CreateTournamentPage() {
     if (!title.trim()) return "Le titre est obligatoire.";
     if (minT < 2) return "min_teams doit être ≥ 2.";
     if (maxT < 2) return "max_teams doit être ≥ 2.";
+    if (maxT > 24) return "max_teams ne peut pas dépasser 24.";
     if (minT > maxT) return "min_teams ne peut pas être > max_teams.";
     if (endTime <= startTime) return "end_time doit être après start_time.";
 
@@ -153,6 +178,16 @@ export default function CreateTournamentPage() {
     const rd = clampInt(rotationDurationMin, 0);
     if (md < 1) return "Durée de match invalide.";
     if (rd < 0) return "Durée de rotation invalide.";
+
+    const fmt = (format ?? "").trim();
+    if (fmt !== "round_robin" && fmt !== "groups_round_robin") return "Format invalide.";
+
+    if (fmt === "groups_round_robin") {
+      if (gc < 1 || gc > 8) return "Nombre de poules doit être entre 1 et 8.";
+      const names = normalizeTextArray(groupNames, gc, "Poule");
+      const empty = names.find((s) => !String(s ?? "").trim());
+      if (empty != null) return "Chaque poule doit avoir un nom.";
+    }
 
     return "";
   }
@@ -172,6 +207,10 @@ export default function CreateTournamentPage() {
       router.push("/login");
       return;
     }
+
+    const fmt = (format ?? "round_robin").trim();
+    const gcFinal = fmt === "groups_round_robin" ? gc : 1;
+    const groupNamesFinal = fmt === "groups_round_robin" ? normalizeTextArray(groupNames, gcFinal, "Poule") : null;
 
     const payload: any = {
       user_id: user.id,
@@ -196,6 +235,10 @@ export default function CreateTournamentPage() {
 
       pauses: buildPausesPayload(),
       field_pauses: fieldPauses,
+
+      format: fmt,
+      group_count: gcFinal,
+      group_names: groupNamesFinal,
     };
 
     const { data, error } = await supabase.from("tournaments").insert(payload).select("id").single();
@@ -209,13 +252,17 @@ export default function CreateTournamentPage() {
     router.push(`/dashboard/tournaments/${data.id}/teams`);
   }
 
+  const showGroups = format === "groups_round_robin";
+
   return (
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="max-w-4xl mx-auto space-y-4">
         <div className="bg-white rounded-xl shadow p-6 flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">Créer un tournoi</h1>
-            <p className="text-sm text-gray-500">Version “B” : min/max équipes + dates + horaires + pauses.</p>
+            <p className="text-sm text-gray-500">
+              Version “B” : min/max équipes + dates + horaires + pauses + poules (round robin).
+            </p>
           </div>
           <button
             onClick={() => router.push("/dashboard/tournaments")}
@@ -231,113 +278,107 @@ export default function CreateTournamentPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm text-gray-600">Titre</label>
-              <input
-                className="w-full border rounded-lg p-2"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-              />
+              <input className="w-full border rounded-lg p-2" value={title} onChange={(e) => setTitle(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Date du tournoi</label>
-              <input
-                type="date"
-                className="w-full border rounded-lg p-2"
-                value={tournamentDate}
-                onChange={(e) => setTournamentDate(e.target.value)}
-              />
+              <input type="date" className="w-full border rounded-lg p-2" value={tournamentDate} onChange={(e) => setTournamentDate(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Min équipes (défaut 2)</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={minTeams}
-                onChange={(e) => setMinTeams(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={minTeams} onChange={(e) => setMinTeams(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Max équipes (défaut 24)</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={maxTeams}
-                onChange={(e) => setMaxTeams(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={maxTeams} onChange={(e) => setMaxTeams(e.target.value)} />
             </div>
 
             <div>
+              <label className="text-sm text-gray-600">Format du tournoi</label>
+              <select className="w-full border rounded-lg p-2 bg-white" value={format} onChange={(e) => setFormat(e.target.value)}>
+                <option value="round_robin">Round Robin (toutes les équipes)</option>
+                <option value="groups_round_robin">Round Robin par poules (jusqu’à 8)</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Les matchs seront générés automatiquement à l’intérieur des poules (pas d’inter-poules).
+              </p>
+            </div>
+
+            {showGroups ? (
+              <div>
+                <label className="text-sm text-gray-600">Nombre de poules (1 à 8)</label>
+                <input type="number" min={1} max={8} className="w-full border rounded-lg p-2" value={groupCount} onChange={(e) => setGroupCount(e.target.value)} />
+                <p className="text-xs text-gray-500 mt-1">Tu pourras assigner chaque équipe à une poule dans “Équipes”.</p>
+              </div>
+            ) : (
+              <div className="opacity-60">
+                <label className="text-sm text-gray-600">Nombre de poules</label>
+                <input type="number" className="w-full border rounded-lg p-2" value={1} disabled readOnly />
+                <p className="text-xs text-gray-500 mt-1">Format global : 1 seul groupe.</p>
+              </div>
+            )}
+
+            <div>
               <label className="text-sm text-gray-600">Heure début</label>
-              <input
-                type="time"
-                className="w-full border rounded-lg p-2"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-              />
+              <input type="time" className="w-full border rounded-lg p-2" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Heure fin</label>
-              <input
-                type="time"
-                className="w-full border rounded-lg p-2"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-              />
+              <input type="time" className="w-full border rounded-lg p-2" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Durée match (min)</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={matchDurationMin}
-                onChange={(e) => setMatchDurationMin(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={matchDurationMin} onChange={(e) => setMatchDurationMin(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Durée rotation (min)</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={rotationDurationMin}
-                onChange={(e) => setRotationDurationMin(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={rotationDurationMin} onChange={(e) => setRotationDurationMin(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Min joueurs / équipe</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={minPlayersPerTeam}
-                onChange={(e) => setMinPlayersPerTeam(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={minPlayersPerTeam} onChange={(e) => setMinPlayersPerTeam(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Max joueurs / équipe</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={maxPlayersPerTeam}
-                onChange={(e) => setMaxPlayersPerTeam(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={maxPlayersPerTeam} onChange={(e) => setMaxPlayersPerTeam(e.target.value)} />
             </div>
 
             <div>
               <label className="text-sm text-gray-600">Nombre de terrains</label>
-              <input
-                type="number"
-                className="w-full border rounded-lg p-2"
-                value={numFields}
-                onChange={(e) => setNumFields(e.target.value)}
-              />
+              <input type="number" className="w-full border rounded-lg p-2" value={numFields} onChange={(e) => setNumFields(e.target.value)} />
             </div>
           </div>
+
+          {/* ✅ NOMS DE POULES */}
+          {showGroups && (
+            <div className="border-t pt-4 space-y-3">
+              <div className="font-semibold">Noms des poules</div>
+              <p className="text-sm text-gray-500">
+                Exemple : “Poule des champions”. Ces noms seront affichés sur la page Équipes et pourront être utilisés ensuite.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Array.from({ length: gc }, (_, i) => (
+                  <div key={i}>
+                    <label className="text-sm text-gray-600">Poule {i + 1}</label>
+                    <input
+                      className="w-full border rounded-lg p-2"
+                      value={groupNames[i] ?? `Poule ${i + 1}`}
+                      onChange={(e) => updateGroupName(i, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="border-t pt-4 space-y-3">
             <div className="font-semibold">Noms des terrains</div>
@@ -345,36 +386,23 @@ export default function CreateTournamentPage() {
               {fieldNames.map((n, i) => (
                 <div key={i}>
                   <label className="text-sm text-gray-600">Terrain {i + 1}</label>
-                  <input
-                    className="w-full border rounded-lg p-2"
-                    value={n}
-                    onChange={(e) => updateFieldName(i, e.target.value)}
-                  />
+                  <input className="w-full border rounded-lg p-2" value={n} onChange={(e) => updateFieldName(i, e.target.value)} />
                 </div>
               ))}
             </div>
           </div>
 
+          {/* pauses tournoi */}
           <div className="border-t pt-4 space-y-3">
             <div className="font-semibold">Pause tournoi</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="text-sm text-gray-600">Pause tournoi de</label>
-                <input
-                  type="time"
-                  className="w-full border rounded-lg p-2"
-                  value={globalPauseFrom}
-                  onChange={(e) => setGlobalPauseFrom(e.target.value)}
-                />
+                <input type="time" className="w-full border rounded-lg p-2" value={globalPauseFrom} onChange={(e) => setGlobalPauseFrom(e.target.value)} />
               </div>
               <div>
                 <label className="text-sm text-gray-600">à</label>
-                <input
-                  type="time"
-                  className="w-full border rounded-lg p-2"
-                  value={globalPauseTo}
-                  onChange={(e) => setGlobalPauseTo(e.target.value)}
-                />
+                <input type="time" className="w-full border rounded-lg p-2" value={globalPauseTo} onChange={(e) => setGlobalPauseTo(e.target.value)} />
               </div>
             </div>
 
@@ -382,33 +410,20 @@ export default function CreateTournamentPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-sm text-gray-600">De</label>
-                <input
-                  type="time"
-                  className="w-full border rounded-lg p-2"
-                  value={exceptPauseFrom}
-                  onChange={(e) => setExceptPauseFrom(e.target.value)}
-                />
+                <input type="time" className="w-full border rounded-lg p-2" value={exceptPauseFrom} onChange={(e) => setExceptPauseFrom(e.target.value)} />
               </div>
               <div>
                 <label className="text-sm text-gray-600">À</label>
-                <input
-                  type="time"
-                  className="w-full border rounded-lg p-2"
-                  value={exceptPauseTo}
-                  onChange={(e) => setExceptPauseTo(e.target.value)}
-                />
+                <input type="time" className="w-full border rounded-lg p-2" value={exceptPauseTo} onChange={(e) => setExceptPauseTo(e.target.value)} />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Terrains autorisés (ex: 1,3)</label>
-                <input
-                  className="w-full border rounded-lg p-2"
-                  value={exceptFieldsCsv}
-                  onChange={(e) => setExceptFieldsCsv(e.target.value)}
-                />
+                <input className="w-full border rounded-lg p-2" value={exceptFieldsCsv} onChange={(e) => setExceptFieldsCsv(e.target.value)} />
               </div>
             </div>
           </div>
 
+          {/* pauses par terrain */}
           <div className="border-t pt-4 space-y-4">
             <div className="font-semibold">Pauses par terrain</div>
 
@@ -469,10 +484,7 @@ export default function CreateTournamentPage() {
           </div>
 
           <div className="flex justify-end">
-            <button
-              onClick={createTournament}
-              className="bg-blue-600 text-white px-5 py-3 rounded-lg hover:bg-blue-700 transition"
-            >
+            <button onClick={createTournament} className="bg-blue-600 text-white px-5 py-3 rounded-lg hover:bg-blue-700 transition">
               Créer le tournoi
             </button>
           </div>
