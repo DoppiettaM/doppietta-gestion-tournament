@@ -14,12 +14,12 @@ type TournamentRow = {
   id: string;
   title: string | null;
 
-  tournament_date: string | null; // YYYY-MM-DD
+  tournament_date: string | null;
   min_teams: number | null;
   max_teams: number | null;
 
-  start_time: string | null; // HH:MM
-  end_time: string | null; // HH:MM
+  start_time: string | null;
+  end_time: string | null;
 
   match_duration_min: number | null;
   rotation_duration_min: number | null;
@@ -34,8 +34,13 @@ type TournamentRow = {
   group_count: number | null;
   group_names: string[] | null;
 
-  pauses: any | null; // TournamentPause[]
-  field_pauses: any | null; // Record<string, Pause[]>
+  pauses: any | null;
+  field_pauses: any | null;
+
+  screen_partner_top_1_url: string | null;
+  screen_partner_top_2_url: string | null;
+  screen_partner_bottom_1_url: string | null;
+  screen_partner_bottom_2_url: string | null;
 };
 
 function clampInt(v: string, fallback: number) {
@@ -76,6 +81,7 @@ export default function TournamentSettingsPage() {
 
   const [status, setStatus] = useState("Chargement...");
   const [saving, setSaving] = useState(false);
+  const [uploadingPartner, setUploadingPartner] = useState<string | null>(null);
 
   const [t, setT] = useState<TournamentRow | null>(null);
 
@@ -99,20 +105,23 @@ export default function TournamentSettingsPage() {
   const [maxPlayers, setMaxPlayers] = useState("7");
 
   // Format / Poules
-  const [format, setFormat] = useState("round_robin"); // round_robin | groups_round_robin
+  const [format, setFormat] = useState("round_robin");
   const [groupCount, setGroupCount] = useState("1");
   const [groupNames, setGroupNames] = useState<string[]>(["Poule 1"]);
 
-  // ✅ Pauses: UI simplifiée
+  // Pauses
   const [pausesEnabled, setPausesEnabled] = useState(false);
-
-  // pauses par terrain: { "1": [{from,to}], "2": [...] }
   const [fieldPauses, setFieldPauses] = useState<Record<string, Pause[]>>({});
+
+  // Partenaires écran
+  const [partnerTop1, setPartnerTop1] = useState<string | null>(null);
+  const [partnerTop2, setPartnerTop2] = useState<string | null>(null);
+  const [partnerBottom1, setPartnerBottom1] = useState<string | null>(null);
+  const [partnerBottom2, setPartnerBottom2] = useState<string | null>(null);
 
   const fieldCount = useMemo(() => Math.max(1, clampInt(numFields, 1)), [numFields]);
   const groupsN = useMemo(() => Math.max(1, Math.min(8, clampInt(groupCount, 1))), [groupCount]);
 
-  // Maintenir fieldNames à la bonne taille
   useEffect(() => {
     setFieldNames((prev) => {
       const next = [...prev];
@@ -122,7 +131,6 @@ export default function TournamentSettingsPage() {
     });
   }, [fieldCount]);
 
-  // Maintenir groupNames à la bonne taille
   useEffect(() => {
     setGroupNames((prev) => {
       const next = [...prev];
@@ -132,7 +140,6 @@ export default function TournamentSettingsPage() {
     });
   }, [groupsN]);
 
-  // Maintenir fieldPauses à la bonne taille
   useEffect(() => {
     setFieldPauses((prev) => {
       const next: Record<string, Pause[]> = { ...prev };
@@ -155,7 +162,7 @@ export default function TournamentSettingsPage() {
       const { data, error } = await supabase
         .from("tournaments")
         .select(
-          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,min_players_per_team,max_players_per_team,format,group_count,group_names,pauses,field_pauses"
+          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,min_players_per_team,max_players_per_team,format,group_count,group_names,pauses,field_pauses,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
         )
         .eq("id", tournamentId)
         .single();
@@ -190,7 +197,6 @@ export default function TournamentSettingsPage() {
       setGroupCount(String(row.group_count ?? 1));
       setGroupNames(row.group_names && row.group_names.length ? row.group_names : ["Poule 1"]);
 
-      // ✅ Hydrater pauses par terrain depuis DB
       const fp = safeRecord(row.field_pauses);
       const normalized: Record<string, Pause[]> = {};
       for (let f = 1; f <= Math.max(1, Number(row.num_fields ?? 1)); f++) {
@@ -202,13 +208,17 @@ export default function TournamentSettingsPage() {
       }
       setFieldPauses(normalized);
 
-      // ✅ Activer si au moins une pause existe (field_pauses) OU anciennes pauses globales existent
       const pausesLegacy = safeArray<TournamentPause>(row.pauses);
       const legacyOn =
         pausesLegacy.some((p: any) => p?.type === "tournament" && isTime(p?.from) && isTime(p?.to)) ||
         pausesLegacy.some((p: any) => p?.type === "tournament_except" && isTime(p?.from) && isTime(p?.to));
 
       setPausesEnabled(legacyOn || hasAnyPause(normalized));
+
+      setPartnerTop1(row.screen_partner_top_1_url ?? null);
+      setPartnerTop2(row.screen_partner_top_2_url ?? null);
+      setPartnerBottom1(row.screen_partner_bottom_1_url ?? null);
+      setPartnerBottom2(row.screen_partner_bottom_2_url ?? null);
 
       setStatus("");
     }
@@ -260,6 +270,54 @@ export default function TournamentSettingsPage() {
     });
   }
 
+  async function uploadPartner(file: File, slot: "top1" | "top2" | "bottom1" | "bottom2") {
+    try {
+      const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+      if (!allowed.includes(file.type)) {
+        setStatus("⚠️ Format image non supporté. Utilise PNG, JPG ou WEBP.");
+        return;
+      }
+
+      setUploadingPartner(slot);
+      setStatus("");
+
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+      const safeName = `${slot}_${Date.now()}.${ext}`;
+      const filePath = `${tournamentId}/${safeName}`;
+
+      const { error: uploadError } = await supabase.storage.from("partners").upload(filePath, file, {
+        upsert: true,
+      });
+
+      if (uploadError) {
+        setStatus("Erreur upload partenaire: " + uploadError.message);
+        setUploadingPartner(null);
+        return;
+      }
+
+      const { data } = supabase.storage.from("partners").getPublicUrl(filePath);
+      const url = data.publicUrl;
+
+      if (slot === "top1") setPartnerTop1(url);
+      if (slot === "top2") setPartnerTop2(url);
+      if (slot === "bottom1") setPartnerBottom1(url);
+      if (slot === "bottom2") setPartnerBottom2(url);
+
+      setStatus("✅ Image partenaire chargée. N’oublie pas de sauvegarder.");
+      setUploadingPartner(null);
+    } catch (e: any) {
+      setStatus("Erreur upload partenaire: " + (e?.message || "inconnue"));
+      setUploadingPartner(null);
+    }
+  }
+
+  function clearPartner(slot: "top1" | "top2" | "bottom1" | "bottom2") {
+    if (slot === "top1") setPartnerTop1(null);
+    if (slot === "top2") setPartnerTop2(null);
+    if (slot === "bottom1") setPartnerBottom1(null);
+    if (slot === "bottom2") setPartnerBottom2(null);
+  }
+
   function validate() {
     if (!clean(title)) return "Le titre est obligatoire.";
 
@@ -282,7 +340,6 @@ export default function TournamentSettingsPage() {
     if (maxP < 1) return "max joueurs/équipe doit être ≥ 1.";
     if (minP > maxP) return "min joueurs/équipe ne peut pas être > max.";
 
-    // ✅ pauses: si activées, valider format & cohérence
     if (pausesEnabled) {
       for (const [k, arr] of Object.entries(fieldPauses)) {
         for (const p of arr) {
@@ -305,9 +362,8 @@ export default function TournamentSettingsPage() {
     setSaving(true);
     setStatus("");
 
-    // ✅ Si pauses désactivées: vider complètement
     const finalFieldPauses = pausesEnabled ? fieldPauses : {};
-    const finalPausesLegacy: TournamentPause[] = []; // on n’utilise plus les pauses legacy
+    const finalPausesLegacy: TournamentPause[] = [];
 
     const payload: any = {
       title: clean(title),
@@ -332,9 +388,13 @@ export default function TournamentSettingsPage() {
       group_count: groupsN,
       group_names: groupNames.map((x) => clean(x) || "Poule"),
 
-      // ✅ Persist pauses
       pauses: finalPausesLegacy,
       field_pauses: finalFieldPauses,
+
+      screen_partner_top_1_url: partnerTop1,
+      screen_partner_top_2_url: partnerTop2,
+      screen_partner_bottom_1_url: partnerBottom1,
+      screen_partner_bottom_2_url: partnerBottom2,
     };
 
     const { error } = await supabase.from("tournaments").update(payload).eq("id", tournamentId);
@@ -356,6 +416,13 @@ export default function TournamentSettingsPage() {
       </main>
     );
   }
+
+  const partnerCards = [
+    { key: "top1" as const, label: "Partenaire haut #1", value: partnerTop1 },
+    { key: "top2" as const, label: "Partenaire haut #2", value: partnerTop2 },
+    { key: "bottom1" as const, label: "Publicité bas #1", value: partnerBottom1 },
+    { key: "bottom2" as const, label: "Publicité bas #2", value: partnerBottom2 },
+  ];
 
   return (
     <main className="min-h-screen bg-slate-100 p-6">
@@ -387,7 +454,6 @@ export default function TournamentSettingsPage() {
         </div>
 
         <div className="bg-white rounded-xl shadow p-6 space-y-6">
-          {/* Infos principales */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm text-gray-600">Titre</label>
@@ -445,7 +511,6 @@ export default function TournamentSettingsPage() {
             </div>
           </div>
 
-          {/* Terrains */}
           <div className="border-t pt-4 space-y-3">
             <div className="font-semibold">Terrains</div>
 
@@ -464,11 +529,9 @@ export default function TournamentSettingsPage() {
             </div>
           </div>
 
-          {/* ✅ Pauses simplifiées */}
           <div className="border-t pt-4 space-y-3">
             <div className="font-semibold">Pauses</div>
 
-            {/* Ligne unique */}
             <label className="flex items-center gap-3 border rounded-lg p-4 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -484,7 +547,6 @@ export default function TournamentSettingsPage() {
               </div>
             </label>
 
-            {/* Bandeau déroulant */}
             {pausesEnabled && (
               <div className="border rounded-lg p-4 space-y-4 bg-slate-50">
                 <div className="text-sm text-gray-700">
@@ -563,7 +625,64 @@ export default function TournamentSettingsPage() {
             )}
           </div>
 
-          {/* Format / Poules */}
+          <div className="border-t pt-4 space-y-3">
+            <div className="font-semibold">Partenaires écran géant</div>
+            <div className="text-red-600 font-bold">TEST PARTENAIRES</div>
+            <div className="text-xs text-gray-500">
+              Format conseillé : <span className="font-mono">1600 × 400 px</span> (ratio 4:1). Formats acceptés : PNG, JPG, WEBP.
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {partnerCards.map((card) => (
+                <div key={card.key} className="border rounded-lg p-4 space-y-3 bg-slate-50">
+                  <div className="font-semibold text-sm">{card.label}</div>
+
+                  <div className="w-full h-28 border rounded-lg bg-white overflow-hidden flex items-center justify-center">
+                    {card.value ? (
+                      <img
+                        src={card.value}
+                        alt={card.label}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="text-xs text-gray-400 text-center px-3">
+                        Aucun visuel chargé
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 flex-wrap">
+                    <label className="bg-gray-200 px-3 py-2 rounded-lg hover:bg-gray-300 transition text-sm cursor-pointer">
+                      {uploadingPartner === card.key ? "..." : "⬆️ Charger une image"}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) uploadPartner(f, card.key);
+                          e.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => clearPartner(card.key)}
+                      className="bg-red-100 text-red-700 px-3 py-2 rounded-lg hover:bg-red-200 transition text-sm"
+                    >
+                      Retirer
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-gray-500 break-all">
+                    {card.value ? card.value : "Aucune URL"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="border-t pt-4 space-y-3">
             <div className="font-semibold">Format</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

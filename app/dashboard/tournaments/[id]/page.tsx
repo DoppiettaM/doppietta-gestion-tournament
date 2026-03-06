@@ -63,11 +63,10 @@ function prettyDateTime(iso: string | null) {
 
 function hhmmFromIso(iso: string | null) {
   if (!iso) return "";
-  // si ISO, on prend HH:MM
+
   const maybe = (iso ?? "").slice(11, 16);
   if (maybe.includes(":")) return maybe;
 
-  // sinon "HH:MM"
   const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(iso).trim());
   if (m) {
     const hh = String(Math.min(23, Math.max(0, Number(m[1])))).padStart(2, "0");
@@ -128,6 +127,7 @@ export default function TournamentHubPage() {
   const [liveMatch, setLiveMatch] = useState<LiveMatchRow | null>(null);
   const [topScorers, setTopScorers] = useState<TopScorerRow[]>([]);
   const [screenUrl, setScreenUrl] = useState<string>("");
+  const [publicScreenUrl, setPublicScreenUrl] = useState<string>("");
 
   const [busyDelete, setBusyDelete] = useState(false);
 
@@ -148,12 +148,13 @@ export default function TournamentHubPage() {
 
     setStatus("Chargement...");
 
-    // URL écran géant
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const sUrl = `${origin}/dashboard/tournaments/${tournamentId}/screen`;
-    setScreenUrl(sUrl);
+    const adminUrl = `${origin}/dashboard/tournaments/${tournamentId}/screen`;
+    const publicUrl = `${origin}/tournaments/${tournamentId}/public/screen`;
 
-    // 1) Tournoi + durées
+    setScreenUrl(adminUrl);
+    setPublicScreenUrl(publicUrl);
+
     const { data: tData, error: tErr } = await supabase
       .from("tournaments")
       .select("id,title,created_at,match_duration_min,rotation_duration_min")
@@ -173,7 +174,6 @@ export default function TournamentHubPage() {
     const slotMinutes = Math.max(0, matchDur + rotDur);
     const slotMs = slotMinutes * 60_000;
 
-    // 2) Résumé base
     const [
       teamsRes,
       matchesTotalRes,
@@ -197,7 +197,6 @@ export default function TournamentHubPage() {
         .eq("tournament_id", tournamentId)
         .eq("status", "played"),
 
-      // Prochain match
       supabase
         .from("matches")
         .select(
@@ -209,7 +208,6 @@ export default function TournamentHubPage() {
         .order("field_idx", { ascending: true })
         .limit(1),
 
-      // Dernier résultat
       supabase
         .from("matches")
         .select(
@@ -245,7 +243,6 @@ export default function TournamentHubPage() {
     const lp = (lastPlayedRes.data ?? [])[0] as any as LastPlayedRow | undefined;
     setLastPlayed(lp ?? null);
 
-    // BONUS 1: Match en cours (calcul via slot)
     const { data: liveCandidates, error: liveErr } = await supabase
       .from("matches")
       .select(
@@ -273,7 +270,6 @@ export default function TournamentHubPage() {
       setLiveMatch(null);
     }
 
-    // BONUS 2: Top 3 buteurs (matchs validés uniquement)
     const { data: playedMatches, error: playedListErr } = await supabase
       .from("matches")
       .select("id")
@@ -452,9 +448,9 @@ export default function TournamentHubPage() {
   }
 
   const qrImg =
-    screenUrl
+    publicScreenUrl
       ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${safeUrlEncode(
-          screenUrl
+          publicScreenUrl
         )}`
       : "";
 
@@ -467,7 +463,6 @@ export default function TournamentHubPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="max-w-5xl mx-auto space-y-4">
-        {/* Header */}
         <div className="bg-white rounded-xl shadow p-6 flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-2xl font-bold">{tournament.title ?? "Tournoi"}</h1>
@@ -522,14 +517,23 @@ export default function TournamentHubPage() {
             <button
               onClick={() => go("screen")}
               className="bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition"
-              title="Mode écran géant"
+              title="Mode écran géant admin"
             >
               🎥 Écran géant
             </button>
+
+            <a
+              href={publicScreenUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+              title="Écran public mobile"
+            >
+              📱 Écran public
+            </a>
           </div>
         </div>
 
-        {/* LIVE + TOP 3 + QR */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           <div className="bg-white rounded-xl shadow p-5">
             <div className="text-sm text-gray-500">Match en cours</div>
@@ -608,28 +612,30 @@ export default function TournamentHubPage() {
           </div>
 
           <div className="bg-white rounded-xl shadow p-5">
-            <div className="text-sm text-gray-500">QR code Écran géant</div>
-            {screenUrl ? (
+            <div className="text-sm text-gray-500">QR code Écran public</div>
+            {publicScreenUrl ? (
               <div className="mt-3 flex items-center gap-4">
                 <img
                   src={qrImg}
-                  alt="QR code écran géant"
+                  alt="QR code écran public"
                   className="w-[220px] h-[220px] border rounded-lg"
                 />
                 <div className="text-sm">
                   <div className="font-semibold">Scanne pour ouvrir</div>
-                  <div className="text-gray-600 mt-1">Planning + résultats</div>
+                  <div className="text-gray-600 mt-1">Version publique smartphone</div>
                   <div className="mt-2">
                     <a
-                      href={screenUrl}
+                      href={publicScreenUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="text-blue-700 underline break-all"
                     >
-                      {screenUrl}
+                      {publicScreenUrl}
                     </a>
                   </div>
-                  <p className="mt-2 text-xs text-gray-400">(QR généré sans librairie npm.)</p>
+                  <p className="mt-2 text-xs text-gray-400">
+                    QR généré sans librairie npm.
+                  </p>
                 </div>
               </div>
             ) : (
@@ -638,7 +644,6 @@ export default function TournamentHubPage() {
           </div>
         </div>
 
-        {/* Résumé */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           <div className="bg-white rounded-xl shadow p-5">
             <div className="text-sm text-gray-500">Équipes</div>
@@ -684,7 +689,6 @@ export default function TournamentHubPage() {
           </div>
         </div>
 
-        {/* Dernier résultat */}
         <div className="bg-white rounded-xl shadow p-6 flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 className="font-semibold">Dernier résultat</h2>
@@ -717,7 +721,6 @@ export default function TournamentHubPage() {
           </div>
         </div>
 
-        {/* Quick actions */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <button
             onClick={() => go("schedule")}
@@ -774,7 +777,6 @@ export default function TournamentHubPage() {
           </button>
         </div>
 
-        {/* Danger zone */}
         <div className="bg-white rounded-xl shadow p-6 flex items-center justify-between gap-3 flex-wrap border border-red-200">
           <div>
             <h2 className="font-semibold text-red-700">Zone sensible</h2>

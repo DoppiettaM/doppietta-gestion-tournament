@@ -12,24 +12,27 @@ type TournamentRow = {
   num_fields: number | null;
   field_names: string[] | null;
 
-  // ✅ Poules
-  format: string | null; // "round_robin" | "groups_round_robin"
-  group_count: number | null; // 1..8
+  format: string | null;
+  group_count: number | null;
   group_names: string[] | null;
+
+  screen_partner_top_1_url: string | null;
+  screen_partner_top_2_url: string | null;
+  screen_partner_bottom_1_url: string | null;
+  screen_partner_bottom_2_url: string | null;
 };
 
 type MatchRow = {
   id: string;
   start_time: string;
   field_idx: number;
-  status: string; // scheduled | played
+  status: string;
   home_score: number | null;
   away_score: number | null;
 
   home_team_id?: string;
   away_team_id?: string;
 
-  // ✅ join teams => group_idx
   home: { name: string | null; group_idx: number | null } | null;
   away: { name: string | null; group_idx: number | null } | null;
 };
@@ -133,71 +136,82 @@ export default function ScreenPage() {
     return Math.max(1, max);
   }, [tournament, matches]);
 
-  // ✅ UI compact selon nb terrains (objectif: 5 terrains sans scroll horizontal)
   const ui = useMemo(() => {
     const f = numFields;
 
     if (f >= 6) {
       return {
-        headerTitle: "text-2xl",
+        headerTitle: "text-2xl md:text-2xl",
         headerSub: "text-[11px]",
-        tablePad: "p-3",
+        tablePad: "p-2 md:p-3",
         thPad: "px-2 py-2",
-        timeBig: "text-2xl",
+        timeBig: "text-xl md:text-2xl",
         cellPad: "p-2",
         teamText: "text-[12px]",
-        vsText: "text-[10px]",
-        scoreText: "text-xl",
+        vsText: "text-[9px]",
+        scoreText: "text-lg",
         footerText: "text-[10px]",
         nameMax: 14,
-        cellMinH: "min-h-[86px]",
+        cellMinH: "min-h-[84px]",
+        partnerTopH: "h-[64px] md:h-[78px]",
+        partnerBottomH: "h-[70px] md:h-[82px]",
+        mobileTimeW: "w-[36px]",
       };
     }
     if (f === 5) {
       return {
-        headerTitle: "text-3xl",
+        headerTitle: "text-2xl md:text-3xl",
         headerSub: "text-[11px]",
-        tablePad: "p-3",
+        tablePad: "p-2 md:p-3",
         thPad: "px-2 py-2",
-        timeBig: "text-3xl",
+        timeBig: "text-2xl md:text-3xl",
         cellPad: "p-2",
-        teamText: "text-[13px]",
-        vsText: "text-[10px]",
-        scoreText: "text-2xl",
-        footerText: "text-[11px]",
+        teamText: "text-[12px] md:text-[13px]",
+        vsText: "text-[9px] md:text-[10px]",
+        scoreText: "text-xl md:text-2xl",
+        footerText: "text-[10px] md:text-[11px]",
         nameMax: 16,
-        cellMinH: "min-h-[94px]",
+        cellMinH: "min-h-[88px]",
+        partnerTopH: "h-[66px] md:h-[82px]",
+        partnerBottomH: "h-[72px] md:h-[86px]",
+        mobileTimeW: "w-[38px]",
       };
     }
     if (f === 4) {
       return {
-        headerTitle: "text-4xl",
-        headerSub: "text-xs",
-        tablePad: "p-4",
-        thPad: "px-3 py-3",
-        timeBig: "text-4xl",
-        cellPad: "p-3",
-        teamText: "text-sm",
-        vsText: "text-[11px]",
-        scoreText: "text-3xl",
-        footerText: "text-xs",
-        nameMax: 20,
-        cellMinH: "min-h-[110px]",
+        headerTitle: "text-2xl md:text-4xl",
+        headerSub: "text-[10px] md:text-xs",
+        tablePad: "p-2 md:p-4",
+        thPad: "px-2 py-2 md:px-3 md:py-3",
+        timeBig: "text-2xl md:text-4xl",
+        cellPad: "p-2 md:p-3",
+        teamText: "text-[12px] md:text-sm",
+        vsText: "text-[9px] md:text-[11px]",
+        scoreText: "text-xl md:text-3xl",
+        footerText: "text-[10px] md:text-xs",
+        nameMax: 18,
+        cellMinH: "min-h-[96px]",
+        partnerTopH: "h-[72px] md:h-[92px]",
+        partnerBottomH: "h-[76px] md:h-[96px]",
+        mobileTimeW: "w-[40px]",
       };
     }
     return {
-      headerTitle: "text-4xl",
-      headerSub: "text-xs",
-      tablePad: "p-5",
-      thPad: "px-4 py-4",
-      timeBig: "text-4xl",
-      cellPad: "p-4",
-      teamText: "text-lg",
-      vsText: "text-[11px]",
-      scoreText: "text-4xl",
-      footerText: "text-xs",
-      nameMax: 22,
-      cellMinH: "min-h-[130px]",
+      headerTitle: "text-2xl md:text-4xl",
+      headerSub: "text-[10px] md:text-xs",
+      tablePad: "p-2 md:p-5",
+      thPad: "px-2 py-2 md:px-4 md:py-4",
+      timeBig: "text-2xl md:text-4xl",
+      cellPad: "p-2 md:p-4",
+      teamText: "text-[12px] md:text-lg",
+      vsText: "text-[9px] md:text-[11px]",
+      scoreText: "text-xl md:text-4xl",
+      footerText: "text-[10px] md:text-xs",
+      nameMax: 20,
+      cellMinH: "min-h-[102px]",
+      partnerTopH: "h-[74px] md:h-[104px]",
+      partnerBottomH: "h-[80px] md:h-[108px]",
+      mobileTimeW: "w-[42px]",
     };
   }, [numFields]);
 
@@ -262,6 +276,19 @@ export default function ScreenPage() {
     return map;
   }, [matches]);
 
+  const matchesByTime = useMemo(() => {
+    const map = new Map<string, MatchRow[]>();
+    for (const m of matches) {
+      const t = timeHHMM(m.start_time);
+      if (!map.has(t)) map.set(t, []);
+      map.get(t)!.push(m);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => Number(a.field_idx ?? 0) - Number(b.field_idx ?? 0));
+    }
+    return map;
+  }, [matches]);
+
   const liveMatches = useMemo(() => {
     return matches
       .filter((m) => isLive(m, slotMs))
@@ -299,7 +326,9 @@ export default function ScreenPage() {
   async function loadTournament() {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id,title,match_duration_min,rotation_duration_min,num_fields,field_names,format,group_count,group_names")
+      .select(
+        "id,title,match_duration_min,rotation_duration_min,num_fields,field_names,format,group_count,group_names,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
+      )
       .eq("id", tournamentId)
       .single();
 
@@ -436,66 +465,104 @@ export default function ScreenPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId]);
 
-  function Cell({ m }: { m: MatchRow }) {
+  function Cell({ m, compact = false }: { m: MatchRow; compact?: boolean }) {
     const played = (m.status ?? "").toLowerCase() === "played";
     const live = isLive(m, slotMs);
 
-    // ✅ contrastes + lisibilité
     const skin = played
       ? "bg-green-50 border-green-300 text-slate-900"
       : live
-      ? "bg-red-50 border-red-300 text-slate-900"
-      : "bg-white border-slate-200 text-slate-900";
+        ? "bg-red-50 border-red-300 text-slate-900"
+        : "bg-white border-slate-200 text-slate-900";
 
-    const homeName = oneLineName(teamLabel(m.home), ui.nameMax);
-    const awayName = oneLineName(teamLabel(m.away), ui.nameMax);
+    const homeName = oneLineName(teamLabel(m.home), compact ? 13 : ui.nameMax);
+    const awayName = oneLineName(teamLabel(m.away), compact ? 13 : ui.nameMax);
 
     const gLabel = groupLabelFromMatch(m);
     const sLabel = statusLabel(m);
 
     return (
-      <div className={`rounded-2xl border shadow-sm ${skin} ${ui.cellMinH} ${ui.cellPad} flex flex-col`}>
-        {/* Header mini : heure + terrain (petit, discret, mais utile) */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] font-extrabold text-slate-500 truncate">⏱️ {timeHHMM(m.start_time)}</div>
-          <div className="text-[10px] font-extrabold text-slate-500 truncate">🏟️ {fieldNameOnly(m.field_idx)}</div>
-        </div>
-
-        {/* Centre : équipes/vs/score */}
-        <div className="flex-1 flex flex-col items-center justify-center text-center px-1">
-          <div className={`w-full font-extrabold truncate leading-none ${ui.teamText}`}>{homeName}</div>
-          <div className={`font-extrabold text-slate-400 leading-none ${ui.vsText}`}>vs</div>
-          <div className={`w-full font-extrabold truncate leading-none ${ui.teamText}`}>{awayName}</div>
-
-          <div className="mt-1 flex items-center justify-center gap-2">
-            <div className={`font-extrabold tabular-nums ${ui.scoreText}`}>{m.home_score ?? "–"}</div>
-            <div className={`font-extrabold text-slate-300 ${ui.scoreText}`}>-</div>
-            <div className={`font-extrabold tabular-nums ${ui.scoreText}`}>{m.away_score ?? "–"}</div>
+      <div
+        className={[
+          "rounded-2xl border shadow-sm flex flex-col",
+          skin,
+          compact ? "min-h-[82px] p-2" : `${ui.cellMinH} ${ui.cellPad}`,
+        ].join(" ")}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <div className={`font-extrabold text-slate-500 truncate ${compact ? "text-[9px]" : "text-[10px]"}`}>
+            ⏱️ {timeHHMM(m.start_time)}
+          </div>
+          <div className={`font-extrabold text-slate-500 truncate ${compact ? "text-[9px]" : "text-[10px]"}`}>
+            🏟️ {fieldNameOnly(m.field_idx)}
           </div>
         </div>
 
-        {/* Footer : poule bas gauche / statut bas droite */}
-        <div className="flex items-end justify-between gap-2">
-          <div className={`font-extrabold text-slate-600 ${ui.footerText} truncate`}>
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-1">
+          <div className={`w-full font-extrabold truncate leading-none ${compact ? "text-[11px]" : ui.teamText}`}>
+            {homeName}
+          </div>
+          <div className={`font-extrabold text-slate-400 leading-none ${compact ? "text-[8px]" : ui.vsText}`}>
+            vs
+          </div>
+          <div className={`w-full font-extrabold truncate leading-none ${compact ? "text-[11px]" : ui.teamText}`}>
+            {awayName}
+          </div>
+
+          <div className="mt-1 flex items-center justify-center gap-1">
+            <div className={`font-extrabold tabular-nums ${compact ? "text-lg" : ui.scoreText}`}>
+              {m.home_score ?? "–"}
+            </div>
+            <div className={`font-extrabold text-slate-300 ${compact ? "text-lg" : ui.scoreText}`}>-</div>
+            <div className={`font-extrabold tabular-nums ${compact ? "text-lg" : ui.scoreText}`}>
+              {m.away_score ?? "–"}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-end justify-between gap-1">
+          <div className={`font-extrabold text-slate-600 truncate ${compact ? "text-[8px]" : ui.footerText}`}>
             {showGroups ? `📍 ${gLabel}` : ""}
           </div>
-          <div className={`font-extrabold ${ui.footerText} whitespace-nowrap text-slate-700`}>{sLabel}</div>
+          <div className={`font-extrabold whitespace-nowrap text-slate-700 ${compact ? "text-[8px]" : ui.footerText}`}>
+            {sLabel}
+          </div>
         </div>
       </div>
     );
   }
 
-  const PubSlot = ({ label }: { label: string }) => (
-    <div className="bg-white/5 border border-white/10 rounded-3xl p-3 h-[90px] md:h-[110px] flex items-center justify-center text-slate-300">
-      <div className="text-center">
-        <div className="text-sm font-semibold">{label}</div>
-        <div className="text-xs text-slate-400 mt-1">Image partenaire (à brancher)</div>
+  function PartnerSlot({
+    url,
+    label,
+    heightClass,
+  }: {
+    url: string | null | undefined;
+    label: string;
+    heightClass: string;
+  }) {
+    return (
+      <div className={`rounded-2xl ${heightClass} overflow-hidden flex items-center justify-center bg-transparent`}>
+        {url ? (
+          <img
+            src={url}
+            alt={label}
+            className="max-w-full max-h-full object-contain"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-slate-400 p-3 border border-white/10 rounded-2xl bg-white/5">
+            <div className="text-center">
+              <div className="text-sm font-semibold">{label}</div>
+              <div className="text-xs text-slate-500 mt-1">Bannière non renseignée</div>
+            </div>
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  }
 
   const LiveCompact = () => (
-    <div className="bg-white/5 border border-white/10 rounded-3xl p-4">
+    <div className="bg-white/5 border border-white/10 rounded-3xl p-3 md:p-4">
       <div className="text-sm text-slate-300 font-semibold mb-2">🔴 Matchs en cours (compact)</div>
       {liveMatches.length === 0 ? (
         <div className="text-slate-300 text-sm">Aucun match live.</div>
@@ -507,7 +574,7 @@ export default function ScreenPage() {
                 <span>⏱️ {timeHHMM(m.start_time)}</span>
                 <span>🏟️ {fieldNameOnly(m.field_idx)}</span>
               </div>
-              <div className="mt-1 font-extrabold">
+              <div className="mt-1 font-extrabold text-sm md:text-base">
                 {teamLabel(m.home)}{" "}
                 <span className="text-slate-400 mx-2">
                   {m.home_score ?? "–"} - {m.away_score ?? "–"}
@@ -515,7 +582,9 @@ export default function ScreenPage() {
                 {teamLabel(m.away)}
               </div>
               {showGroups && (
-                <div className="mt-1 text-xs text-slate-400 font-semibold truncate">📍 {groupLabelFromMatch(m)}</div>
+                <div className="mt-1 text-xs text-slate-400 font-semibold truncate">
+                  📍 {groupLabelFromMatch(m)}
+                </div>
               )}
             </div>
           ))}
@@ -524,14 +593,13 @@ export default function ScreenPage() {
     </div>
   );
 
-  function renderPlanningSection(title: string, timesList: string[]) {
+  function renderPlanningSectionDesktop(title: string, timesList: string[]) {
     if (timesList.length === 0) return null;
 
     return (
-      <div className={`bg-white/5 border border-white/10 rounded-3xl ${ui.tablePad}`}>
+      <div className={`hidden md:block bg-white/5 border border-white/10 rounded-3xl ${ui.tablePad}`}>
         <div className="font-extrabold mb-3 text-lg text-slate-100">{title}</div>
 
-        {/* ✅ pas de min-width => pas de scroll horizontal */}
         <div className="w-full overflow-hidden">
           <table className="w-full table-fixed border-separate border-spacing-2">
             <thead className="sticky top-0 z-10">
@@ -553,7 +621,7 @@ export default function ScreenPage() {
 
             <tbody>
               {timesList.map((t) => (
-                <tr key={`${title}__${t}`}>
+                <tr key={`${title}__desktop__${t}`}>
                   <td className="bg-slate-950 border border-white/10 rounded-3xl align-top">
                     <div className="px-3 py-4">
                       <div className={`${ui.headerSub} text-slate-300`}>Créneau</div>
@@ -564,7 +632,7 @@ export default function ScreenPage() {
                   {Array.from({ length: numFields }, (_, i) => i + 1).map((field) => {
                     const m = matchByCell.get(`${t}__${field}`);
                     return (
-                      <td key={`${title}__${t}__${field}`} className="align-top">
+                      <td key={`${title}__desktop__${t}__${field}`} className="align-top">
                         {m ? (
                           <Cell m={m} />
                         ) : (
@@ -584,17 +652,91 @@ export default function ScreenPage() {
     );
   }
 
+  function renderPlanningSectionMobile(title: string, timesList: string[]) {
+    if (timesList.length === 0) return null;
+
+    return (
+      <div className={`md:hidden bg-white/5 border border-white/10 rounded-3xl ${ui.tablePad}`}>
+        <div className="font-extrabold mb-3 text-base text-slate-100">{title}</div>
+
+        <div className="overflow-hidden">
+          <table className="w-full border-separate border-spacing-2">
+            <thead>
+              <tr>
+                <th className={`bg-slate-950 border border-white/10 rounded-2xl text-center ${ui.mobileTimeW}`}>
+                  <div className="text-[10px] text-slate-300 py-2">Créneau</div>
+                </th>
+                <th className="bg-slate-950 border border-white/10 rounded-2xl text-left">
+                  <div className="px-3 py-2 text-[10px] text-slate-300">Les rencontres</div>
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {timesList.map((t) => {
+                const arr = matchesByTime.get(t) ?? [];
+                const rows: MatchRow[][] = [];
+                for (let i = 0; i < arr.length; i += 2) rows.push(arr.slice(i, i + 2));
+
+                return (
+                  <tr key={`${title}__mobile__${t}`}>
+                    <td className={`align-top bg-slate-950 border border-white/10 rounded-2xl text-center ${ui.mobileTimeW}`}>
+                      <div className="h-full flex items-center justify-center px-1 py-2">
+                        <div
+                          className="text-[11px] font-extrabold text-slate-200 whitespace-nowrap"
+                          style={{
+                            writingMode: "vertical-rl",
+                            transform: "rotate(180deg)",
+                          }}
+                        >
+                          ⏱️ {t}
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="align-top">
+                      {rows.length > 0 ? (
+                        <div className="space-y-2">
+                          {rows.map((pair, idx) => (
+                            <div key={`${t}__pair__${idx}`} className="grid grid-cols-2 gap-2">
+                              {pair.map((m) => (
+                                <Cell key={m.id} m={m} compact />
+                              ))}
+                              {pair.length === 1 && (
+                                <div className="rounded-2xl border border-white/10 bg-white/5 min-h-[82px]" />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-white/10 bg-white/5 min-h-[82px] p-4 text-center">
+                          <div className="text-white/25 font-extrabold">—</div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-4">
+    <main className="min-h-screen bg-slate-950 text-white p-3 md:p-4">
       <div className="max-w-7xl mx-auto space-y-4">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col md:flex-row items-start justify-between gap-4">
           <div>
             <div className="text-xs text-slate-300">Doppietta Gestion Tournament</div>
-            <h1 className={`${ui.headerTitle} font-extrabold tracking-tight`}>{tournament?.title ?? "Écran géant"}</h1>
+            <h1 className={`${ui.headerTitle} font-extrabold tracking-tight`}>
+              {tournament?.title ?? "Écran géant"}
+            </h1>
             {status && <div className="text-amber-300 mt-2 text-sm">{status}</div>}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             <button
               onClick={() => loadAll()}
               className="text-[11px] bg-white/10 hover:bg-white/20 transition px-3 py-2 rounded-xl font-semibold"
@@ -625,17 +767,33 @@ export default function ScreenPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <PubSlot label="Partenaire #1" />
-          <PubSlot label="Partenaire #2" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 items-center">
+          <PartnerSlot
+            url={tournament?.screen_partner_top_1_url}
+            label="Partenaire #1"
+            heightClass={ui.partnerTopH}
+          />
+          <PartnerSlot
+            url={tournament?.screen_partner_top_2_url}
+            label="Partenaire #2"
+            heightClass={ui.partnerTopH}
+          />
+          <PartnerSlot
+            url={tournament?.screen_partner_bottom_1_url}
+            label="Partenaire #3"
+            heightClass={ui.partnerTopH}
+          />
         </div>
 
         <LiveCompact />
 
-        {renderPlanningSection("Matchs à venir", upcomingTimes)}
-        {renderPlanningSection("Matchs déjà réalisés", doneTimes)}
+        {renderPlanningSectionMobile("Matchs à venir", upcomingTimes)}
+        {renderPlanningSectionDesktop("Matchs à venir", upcomingTimes)}
 
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-5">
+        {renderPlanningSectionMobile("Matchs déjà réalisés", doneTimes)}
+        {renderPlanningSectionDesktop("Matchs déjà réalisés", doneTimes)}
+
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-4 md:p-5">
           <div className="text-sm text-slate-300 font-semibold mb-3">🥅 Top 3 buteurs</div>
           {topScorers.length === 0 ? (
             <div className="text-slate-300">Aucune stat.</div>
@@ -644,24 +802,26 @@ export default function ScreenPage() {
               {topScorers.map((s, idx) => (
                 <div key={s.player_id} className="bg-black/20 border border-white/10 rounded-2xl p-4">
                   <div className="text-xs text-slate-300 font-semibold">#{idx + 1}</div>
-                  <div className="mt-1 font-extrabold">{playerLabel(s.player)}</div>
+                  <div className="mt-1 font-extrabold text-sm md:text-base">{playerLabel(s.player)}</div>
                   <div className="text-xs text-slate-400 mt-1">{s.team?.name ?? ""}</div>
-                  <div className="mt-3 text-3xl font-extrabold tabular-nums">⚽ {s.goals}</div>
+                  <div className="mt-3 text-2xl md:text-3xl font-extrabold tabular-nums">⚽ {s.goals}</div>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-5 text-slate-300">
-            <div className="text-sm font-semibold">📣 Publicité #3</div>
-            <div className="text-xs mt-1">Zone réservée</div>
-          </div>
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-5 text-slate-300">
-            <div className="text-sm font-semibold">📣 Publicité #4</div>
-            <div className="text-xs mt-1">Zone réservée</div>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 items-center">
+          <PartnerSlot
+            url={tournament?.screen_partner_bottom_1_url}
+            label="Publicité #1"
+            heightClass={ui.partnerBottomH}
+          />
+          <PartnerSlot
+            url={tournament?.screen_partner_bottom_2_url}
+            label="Publicité #2"
+            heightClass={ui.partnerBottomH}
+          />
         </div>
       </div>
     </main>
