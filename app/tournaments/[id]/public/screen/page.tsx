@@ -1,0 +1,569 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+
+type TournamentRow = {
+  id: string;
+  title: string | null;
+  match_duration_min: number | null;
+  rotation_duration_min: number | null;
+  num_fields: number | null;
+  field_names: string[] | null;
+  format: string | null;
+  group_count: number | null;
+  group_names: string[] | null;
+  screen_partner_top_1_url: string | null;
+  screen_partner_top_2_url: string | null;
+  screen_partner_bottom_1_url: string | null;
+  screen_partner_bottom_2_url: string | null;
+};
+
+type MatchRow = {
+  id: string;
+  start_time: string;
+  field_idx: number;
+  status: string;
+  home_score: number | null;
+  away_score: number | null;
+  home: { name: string | null; group_idx: number | null } | null;
+  away: { name: string | null; group_idx: number | null } | null;
+};
+
+type StatRow = {
+  player_id: string;
+  goals: number;
+  player: { first_name: string | null; last_name: string | null } | null;
+  team: { name: string | null } | null;
+};
+
+function timeHHMM(v: string | null) {
+  if (!v) return "--:--";
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v.trim());
+  if (m) {
+    const hh = String(Math.min(23, Math.max(0, Number(m[1])))).padStart(2, "0");
+    const mm = String(Math.min(59, Math.max(0, Number(m[2])))).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+  const ms = Date.parse(v);
+  if (!Number.isNaN(ms)) {
+    return new Date(ms).toLocaleTimeString("fr-FR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  return "--:--";
+}
+
+function parseMsLoose(v: string | null) {
+  if (!v) return NaN;
+  const ms = Date.parse(v);
+  if (!Number.isNaN(ms)) return ms;
+
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v.trim());
+  if (m) {
+    const hh = Math.min(23, Math.max(0, Number(m[1])));
+    const mm = Math.min(59, Math.max(0, Number(m[2])));
+    const d = new Date();
+    d.setHours(hh, mm, 0, 0);
+    return d.getTime();
+  }
+  return NaN;
+}
+
+function playerLabel(p: StatRow["player"]) {
+  const fn = (p?.first_name ?? "").trim();
+  const ln = (p?.last_name ?? "").trim();
+  const full = `${fn} ${ln}`.trim();
+  return full || "Joueur";
+}
+
+function teamLabel(t: { name: string | null } | null) {
+  const s = (t?.name ?? "").trim();
+  return s || "Équipe";
+}
+
+function oneLineName(raw: string, maxChars = 18) {
+  const s = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (!s) return "Équipe";
+  if (s.length <= maxChars) return s;
+  const cut = Math.max(1, maxChars - 1);
+  return s.slice(0, cut).replace(/\s+$/g, "") + "…";
+}
+
+function isLive(m: MatchRow, slotMs: number) {
+  if ((m.status ?? "").toLowerCase() === "played") return false;
+  const st = parseMsLoose(m.start_time);
+  if (Number.isNaN(st)) return false;
+  if (slotMs <= 0) return false;
+  const et = st + slotMs;
+  const now = Date.now();
+  return st <= now && now < et;
+}
+
+function clampInt(n: number, min: number, max: number) {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+export default function PublicScreenPage() {
+  const params = useParams();
+  const tournamentId = String(params.id);
+
+  const [status, setStatus] = useState("Chargement...");
+  const [tournament, setTournament] = useState<TournamentRow | null>(null);
+  const [matches, setMatches] = useState<MatchRow[]>([]);
+  const [topScorers, setTopScorers] = useState<StatRow[]>([]);
+
+  const refreshTimerRef = useRef<number | null>(null);
+
+  const slotMs = useMemo(() => {
+    const md = Number(tournament?.match_duration_min ?? 0);
+    const rd = Number(tournament?.rotation_duration_min ?? 0);
+    return Math.max(0, md + rd) * 60_000;
+  }, [tournament]);
+
+  const showGroups = useMemo(
+    () => (tournament?.format ?? "") === "groups_round_robin",
+    [tournament]
+  );
+
+  const groupNames = useMemo(() => {
+    const raw = Array.isArray(tournament?.group_names)
+      ? (tournament?.group_names as any[])
+      : [];
+    const n = clampInt(Number(tournament?.group_count ?? 1), 1, 8);
+    const out: string[] = [];
+    for (let i = 1; i <= n; i++) {
+      const s = String(raw[i - 1] ?? "").trim();
+      out.push(s || `Poule ${i}`);
+    }
+    return out;
+  }, [tournament]);
+
+  function fieldNameOnly(fieldIdx: number) {
+    const names = (tournament?.field_names ?? []).map((x) => String(x ?? "").trim());
+    const idx = Math.max(1, Number(fieldIdx || 1));
+    const custom = names[idx - 1] ?? "";
+    return custom || String(idx);
+  }
+
+  function groupLabelFromMatch(m: MatchRow) {
+    if (!showGroups) return "";
+    const g = Number(m.home?.group_idx ?? m.away?.group_idx ?? 1);
+    const idx = clampInt(g, 1, Math.max(1, groupNames.length || 1));
+    return groupNames[idx - 1] ?? `Poule ${idx}`;
+  }
+
+  function statusLabel(m: MatchRow) {
+    const played = (m.status ?? "").toLowerCase() === "played";
+    const live = isLive(m, slotMs);
+    if (live) return "🔴 En cours";
+    if (played) return "✅ Validé";
+    return "⏳ À venir";
+  }
+
+  const times = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of matches) {
+      const t = timeHHMM(m.start_time);
+      const ms = parseMsLoose(m.start_time);
+      const val = Number.isNaN(ms) ? Number.MAX_SAFE_INTEGER : ms;
+      const cur = map.get(t);
+      if (cur == null || val < cur) map.set(t, val);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[1] - b[1])
+      .map(([k]) => k);
+  }, [matches]);
+
+  const matchesByTime = useMemo(() => {
+    const map = new Map<string, MatchRow[]>();
+    for (const m of matches) {
+      const t = timeHHMM(m.start_time);
+      if (!map.has(t)) map.set(t, []);
+      map.get(t)!.push(m);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => Number(a.field_idx ?? 0) - Number(b.field_idx ?? 0));
+    }
+    return map;
+  }, [matches]);
+
+  const { doneTimes, upcomingTimes } = useMemo(() => {
+    const byTime = new Map<string, { allPlayed: boolean; idx: number }>();
+    const idx = new Map(times.map((t, i) => [t, i]));
+
+    for (const t of times) byTime.set(t, { allPlayed: true, idx: idx.get(t) ?? 0 });
+
+    for (const m of matches) {
+      const t = timeHHMM(m.start_time);
+      if (!byTime.has(t)) byTime.set(t, { allPlayed: true, idx: idx.get(t) ?? 0 });
+      const s = byTime.get(t)!;
+      const played = (m.status ?? "").toLowerCase() === "played";
+      if (!played) s.allPlayed = false;
+    }
+
+    const done: string[] = [];
+    const up: string[] = [];
+    for (const [t, s] of byTime.entries()) {
+      if (s.allPlayed) done.push(t);
+      else up.push(t);
+    }
+
+    const sortBy = (a: string, b: string) => (idx.get(a) ?? 0) - (idx.get(b) ?? 0);
+    done.sort(sortBy);
+    up.sort(sortBy);
+
+    return { doneTimes: done, upcomingTimes: up };
+  }, [matches, times]);
+
+  async function loadTournament() {
+    const { data, error } = await supabase
+      .from("tournaments")
+      .select(
+        "id,title,match_duration_min,rotation_duration_min,num_fields,field_names,format,group_count,group_names,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
+      )
+      .eq("id", tournamentId)
+      .single();
+
+    if (error) {
+      setStatus("Erreur tournoi: " + error.message);
+      return;
+    }
+    setTournament((data ?? null) as any);
+  }
+
+  async function loadMatches() {
+    const { data, error } = await supabase
+      .from("matches")
+      .select(
+        "id,start_time,field_idx,status,home_score,away_score,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)"
+      )
+      .eq("tournament_id", tournamentId)
+      .order("start_time", { ascending: true })
+      .order("field_idx", { ascending: true });
+
+    if (error) {
+      setStatus("Erreur matches: " + error.message);
+      return;
+    }
+    setMatches((data ?? []) as any);
+  }
+
+  async function loadTopScorers() {
+    const { data: eData, error: eErr } = await supabase
+      .from("match_events")
+      .select(
+        "id,player_id,match_id,type,match:match_id(status),player:player_id(first_name,last_name),team:team_id(name)"
+      )
+      .eq("tournament_id", tournamentId)
+      .eq("type", "goal");
+
+    if (eErr) {
+      setTopScorers([]);
+      return;
+    }
+
+    const goals = (eData ?? []).filter(
+      (r: any) => (r?.match?.status ?? "").toLowerCase() === "played"
+    );
+
+    const byPlayer = new Map<string, StatRow>();
+    for (const r of goals as any[]) {
+      const pid = String(r.player_id ?? "");
+      if (!pid) continue;
+      const cur = byPlayer.get(pid);
+      if (!cur) {
+        byPlayer.set(pid, {
+          player_id: pid,
+          goals: 1,
+          player: r.player ?? null,
+          team: r.team ?? null,
+        });
+      } else {
+        cur.goals += 1;
+      }
+    }
+
+    setTopScorers(
+      Array.from(byPlayer.values())
+        .sort((a, b) => b.goals - a.goals)
+        .slice(0, 3)
+    );
+  }
+
+  async function loadAll() {
+    setStatus("Chargement...");
+    await loadTournament();
+    await loadMatches();
+    await loadTopScorers();
+    setStatus("");
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = window.setTimeout(() => loadAll(), 250);
+  }
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournamentId]);
+
+  useEffect(() => {
+    const id = setInterval(() => loadAll(), 10000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournamentId]);
+
+  useEffect(() => {
+    const onFocus = () => scheduleRefresh();
+    const onVis = () => {
+      if (document.visibilityState === "visible") scheduleRefresh();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  useEffect(() => {
+    const ch = supabase
+      .channel(`public_screen_${tournamentId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "matches", filter: `tournament_id=eq.${tournamentId}` },
+        () => scheduleRefresh()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tournaments", filter: `id=eq.${tournamentId}` },
+        () => scheduleRefresh()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "match_events", filter: `tournament_id=eq.${tournamentId}` },
+        () => scheduleRefresh()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournamentId]);
+
+  function MatchCell({ m }: { m: MatchRow }) {
+    const played = (m.status ?? "").toLowerCase() === "played";
+    const live = isLive(m, slotMs);
+
+    const skin = played
+      ? "bg-green-50 border-green-300 text-slate-900"
+      : live
+        ? "bg-red-50 border-red-300 text-slate-900"
+        : "bg-white border-slate-200 text-slate-900";
+
+    const homeName = oneLineName(teamLabel(m.home), 14);
+    const awayName = oneLineName(teamLabel(m.away), 14);
+    const gLabel = groupLabelFromMatch(m);
+    const sLabel = statusLabel(m);
+
+    return (
+      <div className={`rounded-2xl border shadow-sm flex flex-col min-h-[88px] p-2 ${skin}`}>
+        <div className="flex items-center justify-between gap-1">
+          <div className="font-extrabold text-slate-500 truncate text-[9px]">
+            🏟️ {fieldNameOnly(m.field_idx)}
+          </div>
+          <div className="font-extrabold text-slate-500 truncate text-[9px]">
+            {sLabel}
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-1">
+          <div className="w-full font-extrabold truncate leading-none text-[10px] landscape:text-[11px]">
+            {homeName}
+          </div>
+          <div className="font-extrabold text-slate-400 leading-none text-[8px]">
+            vs
+          </div>
+          <div className="w-full font-extrabold truncate leading-none text-[10px] landscape:text-[11px]">
+            {awayName}
+          </div>
+
+          <div className="mt-1 flex items-center justify-center gap-1">
+            <div className="font-extrabold tabular-nums text-base landscape:text-lg">
+              {m.home_score ?? "–"}
+            </div>
+            <div className="font-extrabold text-slate-300 text-base landscape:text-lg">-</div>
+            <div className="font-extrabold tabular-nums text-base landscape:text-lg">
+              {m.away_score ?? "–"}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-end justify-between gap-1">
+          <div className="font-extrabold text-slate-600 truncate text-[8px]">
+            {showGroups ? `📍 ${gLabel}` : ""}
+          </div>
+          <div className="font-extrabold whitespace-nowrap text-slate-700 text-[8px]">
+            ⏱️ {timeHHMM(m.start_time)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function PartnerSlot({
+    url,
+    label,
+    heightClass,
+  }: {
+    url: string | null | undefined;
+    label: string;
+    heightClass: string;
+  }) {
+    return (
+      <div className={`rounded-2xl ${heightClass} overflow-hidden flex items-center justify-center bg-transparent`}>
+        {url ? (
+          <img src={url} alt={label} className="max-w-full max-h-full object-contain" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-slate-400 p-3 border border-white/10 rounded-2xl bg-white/5">
+            <div className="text-center">
+              <div className="text-sm font-semibold">{label}</div>
+              <div className="text-xs text-slate-500 mt-1">Bannière non renseignée</div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderPlanningSection(title: string, timesList: string[]) {
+    if (timesList.length === 0) return null;
+
+    return (
+      <div className="bg-white/5 border border-white/10 rounded-3xl p-2">
+        <div className="font-extrabold mb-3 text-base text-slate-100">{title}</div>
+
+        <div className="space-y-3">
+          {timesList.map((t) => {
+            const arr = matchesByTime.get(t) ?? [];
+            const rows: MatchRow[][] = [];
+            for (let i = 0; i < arr.length; i += 2) {
+              rows.push(arr.slice(i, i + 2));
+            }
+
+            return (
+              <div key={`${title}__${t}`} className="flex items-stretch gap-2">
+                <div className="w-[42px] shrink-0 bg-slate-950 border border-white/10 rounded-2xl flex items-center justify-center px-1">
+                  <div
+                    className="text-[11px] font-extrabold text-slate-200 whitespace-nowrap"
+                    style={{
+                      writingMode: "vertical-rl",
+                      transform: "rotate(180deg)",
+                    }}
+                  >
+                    ⏱️ {t}
+                  </div>
+                </div>
+
+                <div className="flex-1 space-y-2">
+                  {rows.length > 0 ? (
+                    rows.map((pair, idx) => (
+                      <div key={`${t}__pair__${idx}`} className="grid grid-cols-2 gap-2">
+                        {pair.map((m) => (
+                          <MatchCell key={m.id} m={m} />
+                        ))}
+                        {pair.length === 1 && (
+                          <div className="rounded-2xl border border-white/10 bg-white/5 min-h-[88px]" />
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-white/5 min-h-[88px] p-4 text-center">
+                      <div className="text-white/25 font-extrabold">—</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-950 text-white p-3">
+      <div className="max-w-3xl mx-auto space-y-4">
+        <div className="flex flex-col items-start gap-3">
+          <div>
+            <div className="text-xs text-slate-300">Doppietta Gestion Tournament</div>
+            <h1 className="text-2xl font-extrabold tracking-tight">
+              {tournament?.title ?? "Écran public"}
+            </h1>
+            {status && <div className="text-amber-300 mt-2 text-sm">{status}</div>}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 landscape:grid-cols-3 items-center">
+          <PartnerSlot
+            url={tournament?.screen_partner_top_1_url}
+            label="Partenaire #1"
+            heightClass="h-[74px] landscape:h-[64px]"
+          />
+          <PartnerSlot
+            url={tournament?.screen_partner_top_2_url}
+            label="Partenaire #2"
+            heightClass="h-[74px] landscape:h-[64px]"
+          />
+          <PartnerSlot
+            url={tournament?.screen_partner_bottom_1_url}
+            label="Partenaire #3"
+            heightClass="h-[74px] landscape:h-[64px]"
+          />
+        </div>
+
+        {renderPlanningSection("Matchs à venir", upcomingTimes)}
+        {renderPlanningSection("Matchs déjà réalisés", doneTimes)}
+
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-4">
+          <div className="text-sm text-slate-300 font-semibold mb-3">🥅 Top 3 buteurs</div>
+          {topScorers.length === 0 ? (
+            <div className="text-slate-300">Aucune stat.</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 landscape:grid-cols-3">
+              {topScorers.map((s, idx) => (
+                <div key={s.player_id} className="bg-black/20 border border-white/10 rounded-2xl p-4">
+                  <div className="text-xs text-slate-300 font-semibold">#{idx + 1}</div>
+                  <div className="mt-1 font-extrabold text-sm">{playerLabel(s.player)}</div>
+                  <div className="text-xs text-slate-400 mt-1">{s.team?.name ?? ""}</div>
+                  <div className="mt-3 text-2xl font-extrabold tabular-nums">⚽ {s.goals}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 landscape:grid-cols-2 items-center">
+          <PartnerSlot
+            url={tournament?.screen_partner_bottom_1_url}
+            label="Publicité #1"
+            heightClass="h-[80px] landscape:h-[70px]"
+          />
+          <PartnerSlot
+            url={tournament?.screen_partner_bottom_2_url}
+            label="Publicité #2"
+            heightClass="h-[80px] landscape:h-[70px]"
+          />
+        </div>
+      </div>
+    </main>
+  );
+}
