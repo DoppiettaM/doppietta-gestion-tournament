@@ -561,38 +561,6 @@ export default function ScreenPage() {
     );
   }
 
-  const LiveCompact = () => (
-    <div className="bg-white/5 border border-white/10 rounded-3xl p-3 md:p-4">
-      <div className="text-sm text-slate-300 font-semibold mb-2">🔴 Matchs en cours (compact)</div>
-      {liveMatches.length === 0 ? (
-        <div className="text-slate-300 text-sm">Aucun match live.</div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {liveMatches.map((m) => (
-            <div key={m.id} className="bg-black/20 border border-white/10 rounded-2xl p-3">
-              <div className="text-xs text-slate-300 flex items-center justify-between">
-                <span>⏱️ {timeHHMM(m.start_time)}</span>
-                <span>🏟️ {fieldNameOnly(m.field_idx)}</span>
-              </div>
-              <div className="mt-1 font-extrabold text-sm md:text-base">
-                {teamLabel(m.home)}{" "}
-                <span className="text-slate-400 mx-2">
-                  {m.home_score ?? "–"} - {m.away_score ?? "–"}
-                </span>{" "}
-                {teamLabel(m.away)}
-              </div>
-              {showGroups && (
-                <div className="mt-1 text-xs text-slate-400 font-semibold truncate">
-                  📍 {groupLabelFromMatch(m)}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
   function renderPlanningSectionDesktop(title: string, timesList: string[]) {
     if (timesList.length === 0) return null;
 
@@ -604,8 +572,10 @@ export default function ScreenPage() {
           <table className="w-full table-fixed border-separate border-spacing-2">
             <thead className="sticky top-0 z-10">
               <tr>
-                <th className="bg-slate-950 border border-white/10 rounded-3xl text-left w-[92px]">
-                  <div className={`px-3 py-3 ${ui.headerSub} text-slate-300`}>Heure</div>
+                <th className="bg-slate-950 border border-white/10 rounded-3xl text-center w-[140px]">
+                  <div className={`px-3 py-3 ${ui.headerSub} text-slate-300 font-extrabold tracking-wide`}>
+                    DÉBUT PRÉVISIONNEL DES RENCONTRES
+                  </div>
                 </th>
 
                 {Array.from({ length: numFields }, (_, i) => i + 1).map((fieldIdx) => (
@@ -622,9 +592,8 @@ export default function ScreenPage() {
             <tbody>
               {timesList.map((t) => (
                 <tr key={`${title}__desktop__${t}`}>
-                  <td className="bg-slate-950 border border-white/10 rounded-3xl align-top">
-                    <div className="px-3 py-4">
-                      <div className={`${ui.headerSub} text-slate-300`}>Créneau</div>
+                  <td className="bg-slate-950 border border-white/10 rounded-3xl align-middle">
+                    <div className="h-full min-h-[100px] flex items-center justify-center text-center px-3 py-4">
                       <div className={`${ui.timeBig} font-extrabold leading-none`}>⏱️ {t}</div>
                     </div>
                   </td>
@@ -664,7 +633,7 @@ export default function ScreenPage() {
             <thead>
               <tr>
                 <th className={`bg-slate-950 border border-white/10 rounded-2xl text-center ${ui.mobileTimeW}`}>
-                  <div className="text-[10px] text-slate-300 py-2">Créneau</div>
+                  <div className="text-[10px] text-slate-300 py-2 font-extrabold">DÉBUT</div>
                 </th>
                 <th className="bg-slate-950 border border-white/10 rounded-2xl text-left">
                   <div className="px-3 py-2 text-[10px] text-slate-300">Les rencontres</div>
@@ -785,30 +754,22 @@ export default function ScreenPage() {
           />
         </div>
 
-        <LiveCompact />
+        {renderPlanningSectionMobile("PROGRAMME DES PROCHAINES RENCONTRES", upcomingTimes)}
+        {renderPlanningSectionDesktop("PROGRAMME DES PROCHAINES RENCONTRES", upcomingTimes)}
 
-        {renderPlanningSectionMobile("Matchs à venir", upcomingTimes)}
-        {renderPlanningSectionDesktop("Matchs à venir", upcomingTimes)}
-
-        {renderPlanningSectionMobile("Matchs déjà réalisés", doneTimes)}
-        {renderPlanningSectionDesktop("Matchs déjà réalisés", doneTimes)}
+        {renderPlanningSectionMobile("RENCONTRES RÉALISÉES", doneTimes)}
+        {renderPlanningSectionDesktop("RENCONTRES RÉALISÉES", doneTimes)}
 
         <div className="bg-white/5 border border-white/10 rounded-3xl p-4 md:p-5">
-          <div className="text-sm text-slate-300 font-semibold mb-3">🥅 Top 3 buteurs</div>
-          {topScorers.length === 0 ? (
-            <div className="text-slate-300">Aucune stat.</div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {topScorers.map((s, idx) => (
-                <div key={s.player_id} className="bg-black/20 border border-white/10 rounded-2xl p-4">
-                  <div className="text-xs text-slate-300 font-semibold">#{idx + 1}</div>
-                  <div className="mt-1 font-extrabold text-sm md:text-base">{playerLabel(s.player)}</div>
-                  <div className="text-xs text-slate-400 mt-1">{s.team?.name ?? ""}</div>
-                  <div className="mt-3 text-2xl md:text-3xl font-extrabold tabular-nums">⚽ {s.goals}</div>
-                </div>
-              ))}
+          <div className="text-sm md:text-base text-slate-100 font-extrabold mb-3">
+            L’ORGANISATION DE L’ÉVÈNEMENT À UN MESSAGE POUR VOUS !
+          </div>
+
+          <div className="w-full rounded-2xl border border-white/10 bg-black/20 min-h-[120px] md:min-h-[140px] px-5 py-6 flex items-center justify-center text-center">
+            <div className="text-slate-300 text-sm md:text-base">
+              Zone de message libre à paramétrer dans les réglages du tournoi.
             </div>
-          )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 items-center">

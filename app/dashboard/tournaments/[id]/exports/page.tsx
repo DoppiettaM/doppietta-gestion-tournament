@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { supabase } from "../../../../../lib/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";;
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
