@@ -23,6 +23,7 @@ type TeamRow = {
   jersey_svg: string | null;
   group_idx: number | null;
   group_manual: boolean | null;
+  public_sheet_token?: string | null;
   created_at?: string | null;
 };
 
@@ -207,7 +208,9 @@ export default function TeamsPage() {
   async function refreshTeams(currentTournamentId: string) {
     const { data, error } = await supabase
       .from("teams")
-      .select("id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,created_at")
+      .select(
+        "id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
+      )
       .eq("tournament_id", currentTournamentId)
       .order("created_at", { ascending: true });
 
@@ -230,7 +233,6 @@ export default function TeamsPage() {
         return;
       }
 
-      if (!alive) return;
       setStatus("Chargement...");
       setLoading(true);
 
@@ -412,6 +414,19 @@ export default function TeamsPage() {
   function groupLabel(team: TeamRow) {
     const idx = clampInt(Number(team.group_idx ?? 1), 1, groupCount);
     return groupNames[idx - 1] ?? `Poule ${idx}`;
+  }
+
+  function openPublicSheet(team: TeamRow) {
+    if (!team.public_sheet_token) {
+      setStatus("⚠️ Aucun token public trouvé pour cette équipe. Vérifie la migration SQL.");
+      return;
+    }
+
+    const url = `/tournaments/${tournamentId}/teams/${team.id}/sheet?token=${encodeURIComponent(
+      team.public_sheet_token
+    )}`;
+
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   if (loading) {
@@ -708,11 +723,9 @@ export default function TeamsPage() {
                           )}
 
                           <button
-                            onClick={() =>
-                              router.push(`/dashboard/tournaments/${tournamentId}/teams/${t.id}/sheet`)
-                            }
+                            onClick={() => openPublicSheet(t)}
                             className="bg-gray-200 px-3 py-2 rounded-lg hover:bg-gray-300 transition text-sm"
-                            title="Feuille de présence"
+                            title="Feuille de présence publique"
                           >
                             🧾
                           </button>
