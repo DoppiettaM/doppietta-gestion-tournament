@@ -10,7 +10,7 @@ type TournamentRow = {
   id: string;
   title: string | null;
   created_at: string | null;
-  date?: string | null;
+  tournament_date: string | null;
   max_players_per_team: number | null;
 };
 
@@ -60,7 +60,18 @@ function clean(s: string) {
 
 function safeParseDate(iso: string | null | undefined) {
   if (!iso) return null;
-  const ms = Date.parse(iso);
+
+  const s = String(iso).trim();
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    return new Date(y, mo - 1, d);
+  }
+
+  const ms = Date.parse(s);
   if (Number.isNaN(ms)) return null;
   return new Date(ms);
 }
@@ -265,7 +276,7 @@ export default function PublicTeamSheetPage() {
   const [c1, c2, c3] = colors;
 
   const tournamentDate = useMemo(() => {
-    const d = safeParseDate((tournament as any)?.date ?? tournament?.created_at ?? null);
+    const d = safeParseDate(tournament?.tournament_date ?? null);
     return prettyDateFR(d);
   }, [tournament]);
 
@@ -296,23 +307,11 @@ export default function PublicTeamSheetPage() {
 
       setStatus("Chargement...");
 
-      let tRes: any = await publicSupabase
+      const tRes = await publicSupabase
         .from("tournaments")
-        .select("id,title,created_at,date,max_players_per_team")
+        .select("id,title,created_at,tournament_date,max_players_per_team")
         .eq("id", tournamentId)
         .single();
-
-      if (
-        tRes.error &&
-        String(tRes.error.message).includes("column") &&
-        String(tRes.error.message).includes("date")
-      ) {
-        tRes = await publicSupabase
-          .from("tournaments")
-          .select("id,title,created_at,max_players_per_team")
-          .eq("id", tournamentId)
-          .single();
-      }
 
       if (tRes.error) {
         setStatus("Erreur tournoi: " + tRes.error.message);
@@ -726,6 +725,12 @@ export default function PublicTeamSheetPage() {
             <div className="min-w-0">
               <div className="text-sm opacity-90 truncate">
                 {tournament.title ?? "Tournoi"} {tournamentDate ? `· ${tournamentDate}` : ""}
+              </div>
+              <div className="text-xs opacity-90">
+                brute tournament_date: {String(tournament?.tournament_date ?? "null")}
+              </div>
+              <div className="text-xs opacity-90">
+                brute created_at: {String(tournament?.created_at ?? "null")}
               </div>
               <h1 className="text-2xl font-bold truncate">{team.name ?? "Équipe"}</h1>
               <div className="text-xs opacity-90 truncate">{team.email ?? ""}</div>

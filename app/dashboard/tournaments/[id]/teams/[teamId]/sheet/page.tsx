@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useParams, useSearchParams } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -10,7 +10,7 @@ type TournamentRow = {
   id: string;
   title: string | null;
   created_at: string | null;
-  date?: string | null;
+  tournament_date: string | null;
   max_players_per_team: number | null;
 };
 
@@ -32,7 +32,7 @@ type PlayerRow = {
   last_name: string | null;
   jersey_number: number | null;
   license_number: string | null;
-  birth_date?: string | null; // en base: plutôt YYYY-MM-DD
+  birth_date?: string | null;
 };
 
 type StaffRow = {
@@ -40,7 +40,7 @@ type StaffRow = {
   last_name: string;
   license_number: string;
   no_license: boolean;
-  birth_date: string; // texte libre (JSON)
+  birth_date: string;
   phone: string;
 };
 
@@ -51,7 +51,7 @@ type PlayerForm = {
   first_name: string;
   license_number: string;
   no_license: boolean;
-  birth_date: string; // UI: JJ/MM/AAAA (ou YYYY-MM-DD accepté)
+  birth_date: string;
 };
 
 function clean(s: string) {
@@ -60,7 +60,18 @@ function clean(s: string) {
 
 function safeParseDate(iso: string | null | undefined) {
   if (!iso) return null;
-  const ms = Date.parse(iso);
+
+  const s = String(iso).trim();
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    return new Date(y, mo - 1, d);
+  }
+
+  const ms = Date.parse(s);
   if (Number.isNaN(ms)) return null;
   return new Date(ms);
 }
@@ -157,17 +168,10 @@ function hasAnyPlayerData(p: PlayerForm) {
   );
 }
 
-/**
- * UI -> DB (date)
- * - accepte "JJ/MM/AAAA" et "YYYY-MM-DD"
- * - renvoie "YYYY-MM-DD" ou null si vide
- * - si format invalide -> renvoie undefined
- */
 function normalizeBirthDateToISO(input: string): string | null | undefined {
   const s = clean(input);
   if (!s) return null;
 
-  // YYYY-MM-DD
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/;
   const mIso = s.match(iso);
   if (mIso) {
@@ -178,8 +182,7 @@ function normalizeBirthDateToISO(input: string): string | null | undefined {
     return undefined;
   }
 
-  // JJ/MM/AAAA (ou JJ-MM-AAAA)
-  const fr = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/;
+  const fr = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
   const mFr = s.match(fr);
   if (mFr) {
     const d = Number(mFr[1]);
@@ -194,11 +197,6 @@ function normalizeBirthDateToISO(input: string): string | null | undefined {
   return undefined;
 }
 
-/**
- * DB -> UI
- * - si "YYYY-MM-DD" => "JJ/MM/AAAA"
- * - sinon renvoie tel quel
- */
 function displayBirthDate(input: string | null | undefined) {
   const s = clean(input ?? "");
   if (!s) return "";
@@ -208,11 +206,33 @@ function displayBirthDate(input: string | null | undefined) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-export default function TeamSheetPage() {
-  const router = useRouter();
+function getPublicSupabase(token: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    throw new Error("Variables Supabase manquantes côté client.");
+  }
+
+  return createClient(url, anonKey, {
+    global: {
+      headers: token ? { "x-team-sheet-token": token } : {},
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+export default function PublicTeamSheetPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
+
   const tournamentId = String(params.id);
   const teamId = String(params.teamId);
+  const token = clean(searchParams.get("token") ?? "");
 
   const [status, setStatus] = useState("Chargement...");
   const [tournament, setTournament] = useState<TournamentRow | null>(null);
@@ -237,16 +257,26 @@ export default function TeamSheetPage() {
   const [busySavePlayers, setBusySavePlayers] = useState(false);
   const [busyPdf, setBusyPdf] = useState(false);
 
+  const publicSupabase = useMemo(() => {
+    if (!token) return null;
+    try {
+      return getPublicSupabase(token);
+    } catch {
+      return null;
+    }
+  }, [token]);
+
   const maxPlayers = useMemo(() => {
     const v = tournament?.max_players_per_team;
     if (typeof v === "number" && v > 0) return v;
     return 7;
   }, [tournament]);
 
-  const [c1, c2, c3] = useMemo(() => chooseColors(team?.colors ?? null), [team?.colors]);
+  const colors = useMemo(() => chooseColors(team?.colors ?? null), [team?.colors]);
+  const [c1, c2, c3] = colors;
 
   const tournamentDate = useMemo(() => {
-    const d = safeParseDate((tournament as any)?.date ?? tournament?.created_at ?? null);
+    const d = safeParseDate(tournament?.tournament_date ?? null);
     return prettyDateFR(d);
   }, [tournament]);
 
@@ -265,37 +295,30 @@ export default function TeamSheetPage() {
 
   useEffect(() => {
     async function load() {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) return router.push("/login");
+      if (!token) {
+        setStatus("Lien invalide : token manquant.");
+        return;
+      }
+
+      if (!publicSupabase) {
+        setStatus("Configuration publique indisponible.");
+        return;
+      }
 
       setStatus("Chargement...");
 
-      // tournoi
-      let tRes = await supabase
+      const tRes = await publicSupabase
         .from("tournaments")
-        .select("id,title,created_at,date,max_players_per_team")
+        .select("id,title,created_at,tournament_date,max_players_per_team")
         .eq("id", tournamentId)
         .single();
-
-      if (
-        tRes.error &&
-        String(tRes.error.message).includes("column") &&
-        String(tRes.error.message).includes("date")
-      ) {
-        tRes = await supabase
-          .from("tournaments")
-          .select("id,title,created_at,max_players_per_team")
-          .eq("id", tournamentId)
-          .single();
-      }
 
       if (tRes.error) {
         setStatus("Erreur tournoi: " + tRes.error.message);
         return;
       }
 
-      // équipe
-      const teamRes = await supabase
+      const teamRes = await publicSupabase
         .from("teams")
         .select("id,name,email,colors,logo_svg,jersey_style,jersey_svg,staff")
         .eq("id", teamId)
@@ -306,9 +329,7 @@ export default function TeamSheetPage() {
         return;
       }
 
-      // joueurs
-      // ✅ FIX BUILD: pRes typé en any pour autoriser fallback sans birth_date (sinon TS bloque en build)
-      let pRes: any = await supabase
+      let pRes: any = await publicSupabase
         .from("players")
         .select("id,team_id,first_name,last_name,jersey_number,license_number,birth_date")
         .eq("tournament_id", tournamentId)
@@ -321,7 +342,7 @@ export default function TeamSheetPage() {
         String(pRes.error.message).toLowerCase().includes("birth")
       ) {
         setSupportsBirthDate(false);
-        pRes = await supabase
+        pRes = await publicSupabase
           .from("players")
           .select("id,team_id,first_name,last_name,jersey_number,license_number")
           .eq("tournament_id", tournamentId)
@@ -336,8 +357,8 @@ export default function TeamSheetPage() {
         return;
       }
 
-      const tRow = (tRes.data ?? null) as any as TournamentRow;
-      const teamRow = (teamRes.data ?? null) as any as TeamRow;
+      const tRow = (tRes.data ?? null) as TournamentRow;
+      const teamRow = (teamRes.data ?? null) as TeamRow;
       const pRows = ((pRes.data ?? []) as any) as PlayerRow[];
 
       setTournament(tRow);
@@ -357,11 +378,12 @@ export default function TeamSheetPage() {
       setPlayerForms(
         ensureFormsLength(
           forms,
-          tRow.max_players_per_team && tRow.max_players_per_team > 0 ? tRow.max_players_per_team : 7
+          tRow.max_players_per_team && tRow.max_players_per_team > 0
+            ? tRow.max_players_per_team
+            : 7
         )
       );
 
-      // staff
       const sArr = (teamRes.data as any)?.staff;
       if (Array.isArray(sArr)) {
         const next = Array.from({ length: 5 }).map((_, i) => {
@@ -382,12 +404,10 @@ export default function TeamSheetPage() {
     }
 
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, tournamentId, teamId]);
+  }, [publicSupabase, token, tournamentId, teamId]);
 
   useEffect(() => {
     setPlayerForms((prev) => ensureFormsLength(prev, maxPlayers));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [maxPlayers]);
 
   function setStaffField(i: number, k: keyof StaffRow, v: any) {
@@ -411,8 +431,9 @@ export default function TeamSheetPage() {
   }
 
   async function reloadPlayers() {
-    // ✅ FIX BUILD: any pour permettre fallback
-    let pRes: any = await supabase
+    if (!publicSupabase) return;
+
+    let pRes: any = await publicSupabase
       .from("players")
       .select("id,team_id,first_name,last_name,jersey_number,license_number,birth_date")
       .eq("tournament_id", tournamentId)
@@ -425,7 +446,7 @@ export default function TeamSheetPage() {
       String(pRes.error.message).toLowerCase().includes("birth")
     ) {
       setSupportsBirthDate(false);
-      pRes = await supabase
+      pRes = await publicSupabase
         .from("players")
         .select("id,team_id,first_name,last_name,jersey_number,license_number")
         .eq("tournament_id", tournamentId)
@@ -453,11 +474,13 @@ export default function TeamSheetPage() {
       birth_date: displayBirthDate((p as any)?.birth_date ?? ""),
     }));
 
-    setPlayerForms((prev) => (prev.some(hasAnyPlayerData) ? prev : ensureFormsLength(forms, maxPlayers)));
+    setPlayerForms((prev) =>
+      prev.some(hasAnyPlayerData) ? prev : ensureFormsLength(forms, maxPlayers)
+    );
   }
 
   async function saveStaff() {
-    if (!team) return;
+    if (!team || !publicSupabase) return;
     setBusySaveStaff(true);
     setStatus("");
 
@@ -470,7 +493,10 @@ export default function TeamSheetPage() {
       phone: clean(s.phone),
     }));
 
-    const { error } = await supabase.from("teams").update({ staff: payload }).eq("id", teamId);
+    const { error } = await publicSupabase
+      .from("teams")
+      .update({ staff: payload })
+      .eq("id", teamId);
 
     if (error) {
       setStatus("Erreur sauvegarde encadrement: " + error.message);
@@ -484,17 +510,17 @@ export default function TeamSheetPage() {
   }
 
   async function savePlayers() {
+    if (!publicSupabase) return;
+
     setBusySavePlayers(true);
     setStatus("");
 
     const updates: any[] = [];
     const inserts: any[] = [];
 
-    // Validation + conversion date
     for (let idx = 0; idx < playerForms.length; idx++) {
       const row = playerForms[idx];
 
-      // Si ligne vide et pas d'id => skip
       if (!hasAnyPlayerData(row) && !row.id) continue;
 
       const jerseyNum = clean(row.jersey_number) ? Number(row.jersey_number) : null;
@@ -511,11 +537,11 @@ export default function TeamSheetPage() {
       if (supportsBirthDate) {
         const iso = normalizeBirthDateToISO(row.birth_date);
         if (iso === undefined) {
-          setStatus(`⚠️ Date joueur ligne ${idx + 1} invalide. Format attendu: JJ/MM/AAAA (ex: 21/10/2018)`);
+          setStatus(`⚠️ Date joueur ligne ${idx + 1} invalide. Format attendu: JJ/MM/AAAA`);
           setBusySavePlayers(false);
           return;
         }
-        payloadBase.birth_date = iso; // null ou YYYY-MM-DD
+        payloadBase.birth_date = iso;
       }
 
       if (row.id) updates.push({ id: row.id, ...payloadBase });
@@ -523,13 +549,19 @@ export default function TeamSheetPage() {
     }
 
     if (updates.length > 0) {
-      const { error: upErr } = await supabase.from("players").upsert(updates, { onConflict: "id" });
+      const { error: upErr } = await publicSupabase
+        .from("players")
+        .upsert(updates, { onConflict: "id" });
+
       if (upErr) {
         const msg = String(upErr.message || "");
         if (msg.includes("column") && msg.toLowerCase().includes("birth")) {
           setSupportsBirthDate(false);
           const stripped = updates.map(({ birth_date, ...rest }) => rest);
-          const { error: upErr2 } = await supabase.from("players").upsert(stripped, { onConflict: "id" });
+          const { error: upErr2 } = await publicSupabase
+            .from("players")
+            .upsert(stripped, { onConflict: "id" });
+
           if (upErr2) {
             setStatus("Erreur sauvegarde joueurs: " + upErr2.message);
             setBusySavePlayers(false);
@@ -544,13 +576,19 @@ export default function TeamSheetPage() {
     }
 
     if (inserts.length > 0) {
-      const { error: inErr } = await supabase.from("players").insert(inserts);
+      const { error: inErr } = await publicSupabase
+        .from("players")
+        .insert(inserts);
+
       if (inErr) {
         const msg = String(inErr.message || "");
         if (msg.includes("column") && msg.toLowerCase().includes("birth")) {
           setSupportsBirthDate(false);
           const stripped = inserts.map(({ birth_date, ...rest }: any) => rest);
-          const { error: inErr2 } = await supabase.from("players").insert(stripped);
+          const { error: inErr2 } = await publicSupabase
+            .from("players")
+            .insert(stripped);
+
           if (inErr2) {
             setStatus("Erreur insert joueurs: " + inErr2.message);
             setBusySavePlayers(false);
@@ -613,7 +651,13 @@ export default function TeamSheetPage() {
     const rowsPlayers = Array.from({ length: maxPlayers }).map((_, i) => {
       const p = playerForms[i] ?? emptyPlayerForm();
       const lic = p.no_license ? "Pas de licence" : clean(p.license_number);
-      return [clean(p.jersey_number), clean(p.last_name), clean(p.first_name), lic, clean(p.birth_date)];
+      return [
+        clean(p.jersey_number),
+        clean(p.last_name),
+        clean(p.first_name),
+        lic,
+        clean(p.birth_date),
+      ];
     });
 
     autoTable(doc, {
@@ -652,6 +696,16 @@ export default function TeamSheetPage() {
     setBusyPdf(false);
   }
 
+  if (!token) {
+    return (
+      <main className="min-h-screen bg-slate-100 p-6">
+        <div className="max-w-5xl mx-auto bg-white rounded-xl shadow p-6 text-amber-700">
+          Lien invalide : token manquant.
+        </div>
+      </main>
+    );
+  }
+
   if (!team || !tournament) {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
@@ -661,13 +715,22 @@ export default function TeamSheetPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 p-6">
+    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="max-w-6xl mx-auto space-y-4">
-        <div className="rounded-xl shadow p-6" style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, color: "white" }}>
+        <div
+          className="rounded-xl shadow p-6"
+          style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, color: "white" }}
+        >
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="text-sm opacity-90 truncate">
                 {tournament.title ?? "Tournoi"} {tournamentDate ? `· ${tournamentDate}` : ""}
+              </div>
+              <div className="text-xs opacity-90">
+                brute tournament_date: {String(tournament?.tournament_date ?? "null")}
+              </div>
+              <div className="text-xs opacity-90">
+                brute created_at: {String(tournament?.created_at ?? "null")}
               </div>
               <h1 className="text-2xl font-bold truncate">{team.name ?? "Équipe"}</h1>
               <div className="text-xs opacity-90 truncate">{team.email ?? ""}</div>
@@ -688,17 +751,16 @@ export default function TeamSheetPage() {
           </div>
         </div>
 
-        {/* JOUEURS */}
         <div className="bg-white rounded-xl shadow p-6 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
-              <h2 className="font-semibold">Joueurs (max {maxPlayers})</h2>
+              <h2 className="font-semibold">Fiche équipe à compléter</h2>
               <div className="text-xs text-gray-500">
-                Date acceptée: <span className="font-mono">JJ/MM/AAAA</span> (ex: 21/10/2018)
+                Date acceptée : <span className="font-mono">JJ/MM/AAAA</span>
               </div>
               {!supportsBirthDate && (
                 <div className="text-xs text-amber-700 mt-1">
-                  ⚠️ La colonne <span className="font-mono">birth_date</span> n’existe pas en base: la date sera conservée à l’écran et dans le PDF, mais pas stockée.
+                  ⚠️ La date de naissance n’est pas stockée en base actuellement.
                 </div>
               )}
             </div>
@@ -712,17 +774,18 @@ export default function TeamSheetPage() {
                 {busySavePlayers ? "..." : "💾 Sauvegarder joueurs"}
               </button>
               <button
+                onClick={saveStaff}
+                disabled={busySaveStaff}
+                className="bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-black transition disabled:opacity-50"
+              >
+                {busySaveStaff ? "..." : "💾 Sauvegarder encadrement"}
+              </button>
+              <button
                 onClick={exportPdf}
                 disabled={busyPdf}
                 className="bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition disabled:opacity-50"
               >
                 {busyPdf ? "..." : "🧾 PDF"}
-              </button>
-              <button
-                onClick={() => router.push(`/dashboard/tournaments/${tournamentId}/teams`)}
-                className="bg-gray-200 px-4 py-2 rounded-lg hover:bg-gray-300 transition"
-              >
-                ← Retour équipes
               </button>
             </div>
           </div>
@@ -790,24 +853,14 @@ export default function TeamSheetPage() {
               );
             })}
           </div>
-
-          {status && <div className="text-sm text-amber-700">{status}</div>}
         </div>
 
-        {/* ENCADREMENT */}
         <div className="bg-white rounded-xl shadow p-6 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h2 className="font-semibold">Encadrement (jusqu’à 5)</h2>
-            <button
-              onClick={saveStaff}
-              disabled={busySaveStaff}
-              className="bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-black transition disabled:opacity-50"
-            >
-              {busySaveStaff ? "..." : "💾 Sauvegarder encadrement"}
-            </button>
           </div>
 
-          <div className="text-xs text-gray-500">Licence: coche “pas de licence” si besoin.</div>
+          <div className="text-xs text-gray-500">Licence : coche “pas de licence” si besoin.</div>
 
           <div className="space-y-2">
             {staff.map((s, i) => (
