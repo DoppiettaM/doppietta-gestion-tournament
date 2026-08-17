@@ -172,7 +172,7 @@ export default function MatchesPage() {
     setMatches(arr);
 
     // ✅ resync editScores depuis DB
-    const next: Record<string, { home: string; away: string }> = {};
+    const next: Record<string, { home: string; away: string; ph: string; pa: string }> = {};
     for (const m of arr) {
       next[m.id] = {
         home: m.home_score != null ? String(m.home_score) : "",
