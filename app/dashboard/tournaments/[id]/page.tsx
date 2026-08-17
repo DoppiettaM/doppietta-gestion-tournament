@@ -10,6 +10,9 @@ type TournamentRow = {
   created_at: string | null;
   match_duration_min: number | null;
   rotation_duration_min: number | null;
+  format?: string | null;
+  category?: string | null;
+  challenge_id?: string | null;
 };
 
 type NextMatchRow = {
@@ -157,7 +160,7 @@ export default function TournamentHubPage() {
 
     const { data: tData, error: tErr } = await supabase
       .from("tournaments")
-      .select("id,title,created_at,match_duration_min,rotation_duration_min")
+      .select("id,title,created_at,match_duration_min,rotation_duration_min,format,category,challenge_id")
       .eq("id", tournamentId)
       .single();
 
@@ -720,6 +723,20 @@ export default function TournamentHubPage() {
             </button>
           </div>
         </div>
+
+        {tournament?.format === "michel_clipet" && (
+          <div className="bg-gradient-to-r from-red-600 to-slate-900 text-white rounded-xl shadow p-6 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wide">Challenge Michel Clipet {tournament.category ? `· ${tournament.category}` : ""}</div>
+              <div className="text-xl font-extrabold">Pilotage M1 → M55</div>
+              <div className="text-sm text-white/80">Classement 8/4/2 + buts, phase 2 et tirs au but.</div>
+            </div>
+            <div className="flex gap-2">
+              {tournament.challenge_id && <button onClick={() => router.push(`/dashboard/challenges/${tournament.challenge_id}`)} className="bg-white/15 px-4 py-2 rounded-lg">Challenge global</button>}
+              <button onClick={() => go("clipet")} className="bg-white text-slate-900 px-4 py-2 rounded-lg font-bold">Ouvrir le pilotage</button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <button

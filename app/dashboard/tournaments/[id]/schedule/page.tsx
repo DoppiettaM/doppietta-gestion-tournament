@@ -30,6 +30,7 @@ type Tournament = {
   format: string | null; // "round_robin" | "groups_round_robin"
   group_count: number | null; // 1..8
   group_names: string[] | null;
+  phase1_locked?: boolean | null;
 };
 
 type Team = { id: string; name: string; group_idx?: number | null };
@@ -305,7 +306,7 @@ export default function SchedulePage() {
       const { data, error } = await supabase
         .from("tournaments")
         .select(
-          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,pauses,field_pauses,format,group_count,group_names"
+          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,pauses,field_pauses,format,group_count,group_names,phase1_locked"
         )
         .eq("id", tournamentId)
         .single();
@@ -496,6 +497,10 @@ export default function SchedulePage() {
 
   async function generateMatches() {
     if (!t) return;
+    if (t.format === "michel_clipet" && t.phase1_locked) {
+      setStatus("Phase 1 figée : régénération M1–M45 bloquée. Utilise le pilotage Michel Clipet pour la phase 2.");
+      return;
+    }
 
     setEditMode(false);
     setSelectedCell(null);
@@ -602,6 +607,9 @@ const scheduled: Array<{
   away_team_id: string;
   field_idx: number;
   start_time: string;
+  match_number?: number;
+  phase?: string;
+  stage?: string;
 }> = [];
 
 function minMaxGlobalAfter(a: string, b: string) {
@@ -725,6 +733,9 @@ for (const slot of allSlots) {
     away_team_id: chosen.b,
     field_idx: slot.fieldIdx,
     start_time: slot.start,
+    ...(t.format === "michel_clipet"
+      ? { match_number: scheduled.length + 1, phase: "phase1", stage: "league" }
+      : {}),
   });
 
   busySet.add(chosen.a);
@@ -883,12 +894,23 @@ for (const slot of allSlots) {
             )}
           </div>
 
-          <button
-            onClick={generateMatches}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-          >
-            ⚙️ Générer les matchs
-          </button>
+          <div className="flex gap-2">
+            {t.format === "michel_clipet" && (
+              <button
+                onClick={() => router.push(`/dashboard/tournaments/${t.id}/clipet`)}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+              >
+                🏆 Pilotage Michel Clipet
+              </button>
+            )}
+            <button
+              onClick={generateMatches}
+              disabled={t.format === "michel_clipet" && !!t.phase1_locked}
+              className="bg-blue-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+            >
+              ⚙️ {t.format === "michel_clipet" ? "Générer M1–M45" : "Générer les matchs"}
+            </button>
+          </div>
         </div>
 
         {status && <div className="bg-white rounded-xl shadow p-4 text-gray-700">{status}</div>}

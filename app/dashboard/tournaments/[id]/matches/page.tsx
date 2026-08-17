@@ -10,6 +10,7 @@ type TournamentRow = {
   rotation_duration_min: number | null;
   num_fields: number | null;
   field_names: string[] | null;
+  format?: string | null;
 };
 
 type MatchRow = {
@@ -23,6 +24,12 @@ type MatchRow = {
   away_team_id: string;
   home: { name: string } | null;
   away: { name: string } | null;
+  match_number?: number | null;
+  phase?: string | null;
+  stage?: string | null;
+  penalty_home?: number | null;
+  penalty_away?: number | null;
+  winner_team_id?: string | null;
 };
 
 function parseMsLoose(v: string | null) {
@@ -103,7 +110,7 @@ export default function MatchesPage() {
   const [matches, setMatches] = useState<MatchRow[]>([]);
 
   // ✅ scores éditables (resync à chaque refreshMatches)
-  const [editScores, setEditScores] = useState<Record<string, { home: string; away: string }>>({});
+  const [editScores, setEditScores] = useState<Record<string, { home: string; away: string; ph: string; pa: string }>>({});
 
   const [showPlayed, setShowPlayed] = useState(true);
 
@@ -133,7 +140,7 @@ export default function MatchesPage() {
   async function refreshTournament() {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id,match_duration_min,rotation_duration_min,num_fields,field_names")
+      .select("id,match_duration_min,rotation_duration_min,num_fields,field_names,format")
       .eq("id", tournamentId)
       .single();
 
@@ -150,7 +157,7 @@ export default function MatchesPage() {
     const { data, error } = await supabase
       .from("matches")
       .select(
-        "id,start_time,field_idx,status,home_score,away_score,home_team_id,away_team_id,home:home_team_id(name),away:away_team_id(name)"
+        "id,start_time,field_idx,status,home_score,away_score,home_team_id,away_team_id,home:home_team_id(name),away:away_team_id(name),match_number,phase,stage,penalty_home,penalty_away,winner_team_id"
       )
       .eq("tournament_id", tournamentId)
       .order("start_time", { ascending: true })
@@ -170,6 +177,8 @@ export default function MatchesPage() {
       next[m.id] = {
         home: m.home_score != null ? String(m.home_score) : "",
         away: m.away_score != null ? String(m.away_score) : "",
+        ph: m.penalty_home != null ? String(m.penalty_home) : "",
+        pa: m.penalty_away != null ? String(m.penalty_away) : "",
       };
     }
     setEditScores(next);
@@ -270,7 +279,12 @@ export default function MatchesPage() {
     if (hs != null && Number.isNaN(hs)) return alert("Score domicile invalide");
     if (as != null && Number.isNaN(as)) return alert("Score extérieur invalide");
 
-    const { error } = await supabase.from("matches").update({ home_score: hs, away_score: as }).eq("id", matchId);
+    const ph = v.ph.trim() === "" ? null : Number(v.ph);
+    const pa = v.pa.trim() === "" ? null : Number(v.pa);
+    const winner_team_id = hs != null && as != null && hs === as && ph != null && pa != null && ph !== pa
+      ? (ph > pa ? matches.find((m) => m.id === matchId)?.home_team_id : matches.find((m) => m.id === matchId)?.away_team_id)
+      : null;
+    const { error } = await supabase.from("matches").update({ home_score: hs, away_score: as, penalty_home: ph, penalty_away: pa, winner_team_id }).eq("id", matchId);
 
     if (error) {
       alert("Erreur update score: " + error.message);
@@ -282,15 +296,34 @@ export default function MatchesPage() {
 
   async function toggleValidation(match: MatchRow) {
     const played = isPlayed(match);
-    const newStatus = played ? "scheduled" : "played";
-
-    const { error } = await supabase.from("matches").update({ status: newStatus }).eq("id", match.id);
-
-    if (error) {
-      alert("Erreur validation: " + error.message);
-      return;
+    if (played) {
+      const { error } = await supabase.from("matches").update({ status: "scheduled" }).eq("id", match.id);
+      if (error) return alert("Erreur validation: " + error.message);
+      return refreshMatches();
     }
 
+    const v = editScores[match.id] ?? { home: "", away: "", ph: "", pa: "" };
+    const hs = v.home.trim() === "" ? null : Number(v.home);
+    const as = v.away.trim() === "" ? null : Number(v.away);
+    const ph = v.ph.trim() === "" ? null : Number(v.ph);
+    const pa = v.pa.trim() === "" ? null : Number(v.pa);
+    if (hs == null || as == null || Number.isNaN(hs) || Number.isNaN(as)) return alert("Renseigne le score avant de valider.");
+
+    const shootout = tournament?.format === "michel_clipet" && [46, 47, 54, 55].includes(Number(match.match_number));
+    let winner_team_id: string | null = null;
+    if (hs > as) winner_team_id = match.home_team_id;
+    if (as > hs) winner_team_id = match.away_team_id;
+    if (shootout && hs === as) {
+      if (ph == null || pa == null || Number.isNaN(ph) || Number.isNaN(pa) || ph === pa) {
+        return alert("Égalité : renseigne les tirs au but avec un vainqueur.");
+      }
+      winner_team_id = ph > pa ? match.home_team_id : match.away_team_id;
+    }
+
+    const { error } = await supabase.from("matches").update({
+      home_score: hs, away_score: as, penalty_home: ph, penalty_away: pa, winner_team_id, status: "played", played_at: new Date().toISOString(),
+    }).eq("id", match.id);
+    if (error) return alert("Erreur validation: " + error.message);
     await refreshMatches();
   }
 
@@ -334,6 +367,9 @@ export default function MatchesPage() {
 
     const hs = editScores[m.id]?.home ?? "";
     const as = editScores[m.id]?.away ?? "";
+    const ph = editScores[m.id]?.ph ?? "";
+    const pa = editScores[m.id]?.pa ?? "";
+    const shootout = tournament?.format === "michel_clipet" && [46,47,54,55].includes(Number(m.match_number));
 
     return (
       <div
@@ -348,7 +384,7 @@ export default function MatchesPage() {
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-[12px] text-gray-500 font-semibold">⏱️ {t}</div>
+              <div className="text-[12px] text-gray-500 font-semibold">{m.match_number ? `M${m.match_number} · ` : ""}⏱️ {t}</div>
               <div className="font-extrabold text-[13px] truncate">
                 {teamShort(m.home?.name)} <span className="text-gray-400">vs</span> {teamShort(m.away?.name)}
               </div>
@@ -389,7 +425,7 @@ export default function MatchesPage() {
               onChange={(e) =>
                 setEditScores((prev) => ({
                   ...prev,
-                  [m.id]: { ...(prev[m.id] ?? { home: "", away: "" }), home: e.target.value },
+                  [m.id]: { ...(prev[m.id] ?? { home: "", away: "", ph: "", pa: "" }), home: e.target.value },
                 }))
               }
               className="w-12 border rounded-lg px-2 py-2 text-center text-xl font-extrabold"
@@ -401,7 +437,7 @@ export default function MatchesPage() {
               onChange={(e) =>
                 setEditScores((prev) => ({
                   ...prev,
-                  [m.id]: { ...(prev[m.id] ?? { home: "", away: "" }), away: e.target.value },
+                  [m.id]: { ...(prev[m.id] ?? { home: "", away: "", ph: "", pa: "" }), away: e.target.value },
                 }))
               }
               className="w-12 border rounded-lg px-2 py-2 text-center text-xl font-extrabold"
@@ -437,6 +473,16 @@ export default function MatchesPage() {
             </button>
           </div>
         </div>
+        {shootout && (
+          <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 p-2">
+            <div className="text-[11px] font-bold text-amber-800 mb-1">Tirs au but (uniquement si égalité)</div>
+            <div className="flex items-center gap-2">
+              <input value={ph} onChange={(e)=>setEditScores(prev=>({...prev,[m.id]:{...(prev[m.id]??{home:"",away:"",ph:"",pa:""}),ph:e.target.value}}))} className="w-12 border rounded px-2 py-1 text-center" placeholder="TAB" />
+              <span>-</span>
+              <input value={pa} onChange={(e)=>setEditScores(prev=>({...prev,[m.id]:{...(prev[m.id]??{home:"",away:"",ph:"",pa:""}),pa:e.target.value}}))} className="w-12 border rounded px-2 py-1 text-center" placeholder="TAB" />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
