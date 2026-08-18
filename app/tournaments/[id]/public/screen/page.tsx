@@ -29,6 +29,8 @@ type MatchRow = {
   away_score: number | null;
   home: { name: string | null; group_idx: number | null } | null;
   away: { name: string | null; group_idx: number | null } | null;
+  match_number: number | null;
+  match_label: string | null;
 };
 
 type StatRow = {
@@ -115,6 +117,7 @@ export default function PublicScreenPage() {
   const [tournament, setTournament] = useState<TournamentRow | null>(null);
   const [matches, setMatches] = useState<MatchRow[]>([]);
   const [topScorers, setTopScorers] = useState<StatRow[]>([]);
+  const [refByMatch, setRefByMatch] = useState<Record<string,string>>({});
 
   const refreshTimerRef = useRef<number | null>(null);
 
@@ -236,20 +239,32 @@ export default function PublicScreenPage() {
   }
 
   async function loadMatches() {
-    const { data, error } = await supabase
-      .from("matches")
-      .select(
-        "id,start_time,field_idx,status,home_score,away_score,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)"
-      )
-      .eq("tournament_id", tournamentId)
-      .order("start_time", { ascending: true })
-      .order("field_idx", { ascending: true });
+    const [matchRes, refRes] = await Promise.all([
+      supabase
+        .from("matches")
+        .select("id,start_time,field_idx,status,home_score,away_score,match_number,match_label,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)")
+        .eq("tournament_id", tournamentId)
+        .order("start_time", { ascending: true })
+        .order("field_idx", { ascending: true }),
+      supabase
+        .from("referee_assignments")
+        .select("match_id,referee:referee_id(name)")
+        .eq("tournament_id", tournamentId)
+    ]);
 
-    if (error) {
-      setStatus("Erreur matches: " + error.message);
+    if (matchRes.error) {
+      setStatus("Erreur matches: " + matchRes.error.message);
       return;
     }
-    setMatches((data ?? []) as any);
+    setMatches((matchRes.data ?? []) as any);
+    if (!refRes.error) {
+      const map: Record<string,string> = {};
+      for (const row of refRes.data ?? []) {
+        const rr:any = row;
+        map[String(rr.match_id)] = rr.referee?.name ?? "";
+      }
+      setRefByMatch(map);
+    }
   }
 
   async function loadTopScorers() {
@@ -378,7 +393,7 @@ export default function PublicScreenPage() {
       <div className={`rounded-2xl border shadow-sm flex flex-col min-h-[88px] p-2 ${skin}`}>
         <div className="flex items-center justify-between gap-1">
           <div className="font-extrabold text-slate-500 truncate text-[9px]">
-            🏟️ {fieldNameOnly(m.field_idx)}
+            {m.match_number ? `M${m.match_number} · ` : ""}🏟️ {fieldNameOnly(m.field_idx)}
           </div>
           <div className="font-extrabold text-slate-500 truncate text-[9px]">
             {sLabel}
@@ -409,7 +424,7 @@ export default function PublicScreenPage() {
 
         <div className="flex items-end justify-between gap-1">
           <div className="font-extrabold text-slate-600 truncate text-[8px]">
-            {showGroups ? `📍 ${gLabel}` : ""}
+            {refByMatch[m.id] ? `🟨 Arbitre : ${refByMatch[m.id]}` : (showGroups ? `📍 ${gLabel}` : "")}
           </div>
           <div className="font-extrabold whitespace-nowrap text-slate-700 text-[8px]">
             ⏱️ {timeHHMM(m.start_time)}

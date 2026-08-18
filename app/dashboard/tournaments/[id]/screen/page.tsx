@@ -35,6 +35,7 @@ type MatchRow = {
 
   home: { name: string | null; group_idx: number | null } | null;
   away: { name: string | null; group_idx: number | null } | null;
+  match_number: number | null;
 };
 
 type StatRow = {
@@ -117,6 +118,7 @@ export default function ScreenPage() {
   const [status, setStatus] = useState("Chargement...");
   const [tournament, setTournament] = useState<TournamentRow | null>(null);
   const [matches, setMatches] = useState<MatchRow[]>([]);
+  const [refByMatch, setRefByMatch] = useState<Record<string,string>>({});
   const [topScorers, setTopScorers] = useState<StatRow[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
@@ -341,21 +343,14 @@ export default function ScreenPage() {
   }
 
   async function loadMatches() {
-    const { data, error } = await supabase
-      .from("matches")
-      .select(
-        "id,start_time,field_idx,status,home_score,away_score,home_team_id,away_team_id,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)"
-      )
-      .eq("tournament_id", tournamentId)
-      .order("start_time", { ascending: true })
-      .order("field_idx", { ascending: true });
-
-    if (error) {
-      setStatus("Erreur matches: " + error.message);
-      return null;
-    }
-    setMatches((data ?? []) as any);
-    return (data ?? []) as any as MatchRow[];
+    const [matchRes, refRes] = await Promise.all([
+      supabase.from("matches").select("id,start_time,field_idx,status,home_score,away_score,match_number,home_team_id,away_team_id,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)").eq("tournament_id", tournamentId).order("start_time", { ascending: true }).order("field_idx", { ascending: true }),
+      supabase.from("referee_assignments").select("match_id,referee:referee_id(name)").eq("tournament_id", tournamentId)
+    ]);
+    if (matchRes.error) { setStatus("Erreur matches: " + matchRes.error.message); return null; }
+    setMatches((matchRes.data ?? []) as any);
+    if (!refRes.error) { const map:Record<string,string>={}; for(const row of refRes.data??[]){const rr:any=row;map[String(rr.match_id)]=rr.referee?.name??"";} setRefByMatch(map); }
+    return (matchRes.data ?? []) as any as MatchRow[];
   }
 
   async function loadTopScorers() {
@@ -491,7 +486,7 @@ export default function ScreenPage() {
       >
         <div className="flex items-center justify-between gap-1">
           <div className={`font-extrabold text-slate-500 truncate ${compact ? "text-[9px]" : "text-[10px]"}`}>
-            ⏱️ {timeHHMM(m.start_time)}
+            {m.match_number ? `M${m.match_number} · ` : ""}⏱️ {timeHHMM(m.start_time)}
           </div>
           <div className={`font-extrabold text-slate-500 truncate ${compact ? "text-[9px]" : "text-[10px]"}`}>
             🏟️ {fieldNameOnly(m.field_idx)}
@@ -522,7 +517,7 @@ export default function ScreenPage() {
 
         <div className="flex items-end justify-between gap-1">
           <div className={`font-extrabold text-slate-600 truncate ${compact ? "text-[8px]" : ui.footerText}`}>
-            {showGroups ? `📍 ${gLabel}` : ""}
+            {refByMatch[m.id] ? `🟨 Arbitre : ${refByMatch[m.id]}` : (showGroups ? `📍 ${gLabel}` : "")}
           </div>
           <div className={`font-extrabold whitespace-nowrap text-slate-700 ${compact ? "text-[8px]" : ui.footerText}`}>
             {sLabel}

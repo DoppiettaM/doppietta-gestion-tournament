@@ -10,6 +10,8 @@ type TournamentRow = {
   created_at: string | null;
   match_duration_min: number | null;
   rotation_duration_min: number | null;
+  category?: string | null;
+  competition_config?: any;
 };
 
 type NextMatchRow = {
@@ -157,7 +159,7 @@ export default function TournamentHubPage() {
 
     const { data: tData, error: tErr } = await supabase
       .from("tournaments")
-      .select("id,title,created_at,match_duration_min,rotation_duration_min")
+      .select("id,title,created_at,match_duration_min,rotation_duration_min,category,competition_config")
       .eq("id", tournamentId)
       .single();
 
@@ -775,6 +777,13 @@ export default function TournamentHubPage() {
             <div className="mt-2 font-semibold">Équipes</div>
             <div className="text-sm text-gray-500">Feuilles, joueurs, présence.</div>
           </button>
+        </div>
+
+        <div className="bg-white rounded-xl shadow p-4 flex gap-2 flex-wrap">
+          {tournament?.competition_config?.template === "michel_clipet" && (
+            <button onClick={() => router.push(`/dashboard/tournaments/${tournamentId}/clipet`)} className="bg-red-600 text-white px-4 py-2 rounded-lg font-bold">🏆 Pilotage Michel Clipet</button>
+          )}
+          <button onClick={() => router.push(`/dashboard/tournaments/${tournamentId}/referees`)} className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold">⚖️ Arbitres & affectations</button>
         </div>
 
         <div className="bg-white rounded-xl shadow p-6 flex items-center justify-between gap-3 flex-wrap border border-red-200">

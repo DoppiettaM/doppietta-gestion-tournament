@@ -25,6 +25,9 @@ type TeamRow = {
   group_manual: boolean | null;
   public_sheet_token?: string | null;
   created_at?: string | null;
+  club_name?: string | null;
+  team_number?: number | null;
+  disqualified?: boolean | null;
 };
 
 const COLOR_PALETTE: { key: string; label: string; hex: string }[] = [
@@ -156,6 +159,8 @@ export default function TeamsPage() {
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [clubName, setClubName] = useState("");
+  const [teamNumber, setTeamNumber] = useState(1);
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [jerseyStyle, setJerseyStyle] = useState<number>(1);
   const [logoSvg, setLogoSvg] = useState<string>("");
@@ -209,7 +214,7 @@ export default function TeamsPage() {
     const { data, error } = await supabase
       .from("teams")
       .select(
-        "id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
+        "id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at,club_name,team_number,disqualified"
       )
       .eq("tournament_id", currentTournamentId)
       .order("created_at", { ascending: true });
@@ -283,6 +288,17 @@ export default function TeamsPage() {
     setLogoSvg(txt);
   }
 
+
+  async function editChallengeMeta(team: TeamRow) {
+    const club = window.prompt("Nom du club pour le classement Challenge", team.club_name || team.name || "");
+    if (club == null) return;
+    const numRaw = window.prompt("Numéro d'équipe du club (1, 2, ...)", String(team.team_number ?? 1));
+    if (numRaw == null) return;
+    const dq = window.confirm("Cette équipe est-elle absente/disqualifiée pour le classement Challenge ?\nOK = oui / Annuler = non");
+    const { error } = await supabase.from("teams").update({ club_name: clean(club), team_number: Math.max(1, Number(numRaw || 1)), disqualified: dq }).eq("id", team.id);
+    if (error) return setStatus("Erreur métadonnées Challenge: " + error.message);
+    await refreshTeams(tournamentId);
+  }
   async function addTeam() {
     const n = clean(name);
     const e = clean(email);
@@ -307,6 +323,9 @@ export default function TeamsPage() {
       logo_svg: finalLogo,
       jersey_style: jerseyStyle,
       jersey_svg: finalJersey,
+      club_name: clean(clubName) || n,
+      team_number: Math.max(1, Number(teamNumber || 1)),
+      disqualified: false,
     };
 
     if (showGroups) {
@@ -324,6 +343,8 @@ export default function TeamsPage() {
 
     setName("");
     setEmail("");
+    setClubName("");
+    setTeamNumber(1);
     setSelectedColors([]);
     setJerseyStyle(1);
     setLogoSvg("");
@@ -509,6 +530,17 @@ export default function TeamsPage() {
                 onChange={(e) => setEmail(e.target.value)}
               />
 
+              <input
+                className="border rounded-lg px-3 py-2 w-full"
+                placeholder="Nom du club pour le Challenge"
+                value={clubName}
+                onChange={(e) => setClubName(e.target.value)}
+              />
+
+              <label className="text-sm font-semibold">Numéro d'équipe du club
+                <input type="number" min={1} max={20} className="border rounded-lg px-3 py-2 w-full mt-1" value={teamNumber} onChange={(e)=>setTeamNumber(Math.max(1,Number(e.target.value||1)))}/>
+              </label>
+
               <div>
                 <div className="text-sm font-semibold mb-2">Couleurs (1 à 3)</div>
                 <div className="grid grid-cols-4 gap-2">
@@ -686,6 +718,7 @@ export default function TeamsPage() {
                               {idx + 1}. {t.name ?? "Équipe"}
                             </div>
                             <div className="text-xs text-gray-500 truncate">{t.email ?? "—"}</div>
+                            <div className="text-xs text-blue-700 truncate">Challenge: {t.club_name || t.name} {t.team_number ?? 1}{t.disqualified ? " · 0 pt (abs./DQ)" : ""}</div>
 
                             {showGroups && (
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
@@ -721,6 +754,8 @@ export default function TeamsPage() {
                               ))}
                             </select>
                           )}
+
+                          <button onClick={() => editChallengeMeta(t)} className="bg-blue-100 text-blue-800 px-3 py-2 rounded-lg hover:bg-blue-200 transition text-sm" title="Club, numéro d'équipe, disqualification Challenge">🏆</button>
 
                           <button
                             onClick={() => openPublicSheet(t)}

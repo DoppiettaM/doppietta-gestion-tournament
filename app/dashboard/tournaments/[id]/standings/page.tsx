@@ -9,12 +9,14 @@ type TournamentRow = {
   format: string | null; // "round_robin" | "groups_round_robin"
   group_count: number | null; // 1..8
   group_names: string[] | null;
+  competition_config?: any;
 };
 
 type TeamRow = {
   id: string;
   name: string;
   group_idx?: number | null; // ✅ pour séparer par poule
+  tie_break_lot?: number | null;
 };
 
 type MatchRow = {
@@ -24,6 +26,7 @@ type MatchRow = {
   home_score: number | null;
   away_score: number | null;
   status: string;
+  match_number?: number | null;
 };
 
 type StandingRow = {
@@ -37,6 +40,7 @@ type StandingRow = {
   ga: number;
   gd: number;
   pts: number;
+  lot?: number;
 };
 
 function clampInt(n: number, min: number, max: number) {
@@ -71,7 +75,7 @@ export default function StandingsPage() {
   async function refreshTournament() {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id,format,group_count,group_names")
+      .select("id,format,group_count,group_names,competition_config")
       .eq("id", tournamentId)
       .single();
 
@@ -89,7 +93,7 @@ export default function StandingsPage() {
     // ✅ On récupère group_idx pour séparer par poules
     const { data: tData, error: tErr } = await supabase
       .from("teams")
-      .select("id,name,group_idx")
+      .select("id,name,group_idx,tie_break_lot")
       .eq("tournament_id", tournamentId)
       .order("name", { ascending: true });
 
@@ -105,7 +109,7 @@ export default function StandingsPage() {
   async function refreshPlayedMatches() {
     const { data: mData, error: mErr } = await supabase
       .from("matches")
-      .select("id,home_team_id,away_team_id,home_score,away_score,status")
+      .select("id,home_team_id,away_team_id,home_score,away_score,status,match_number")
       .eq("tournament_id", tournamentId)
       .eq("status", "played");
 
@@ -197,6 +201,7 @@ export default function StandingsPage() {
 
   // ✅ Détection poules + noms
   const showGroups = useMemo(() => (tournament?.format ?? "") === "groups_round_robin", [tournament]);
+  const isClipet = tournament?.competition_config?.template === "michel_clipet";
 
   const groupNames = useMemo(() => {
     const raw = Array.isArray(tournament?.group_names) ? (tournament?.group_names as any[]) : [];
@@ -224,11 +229,13 @@ export default function StandingsPage() {
         ga: 0,
         gd: 0,
         pts: 0,
+        lot: Number(t.tie_break_lot ?? 0),
       });
     }
 
     for (const m of matches) {
       if (m.home_score == null || m.away_score == null) continue;
+      if (isClipet && Number(m.match_number ?? 0) > 45) continue;
 
       const home = byId.get(m.home_team_id);
       const away = byId.get(m.away_team_id);
@@ -245,21 +252,23 @@ export default function StandingsPage() {
       away.gf += m.away_score;
       away.ga += m.home_score;
 
+      if (isClipet) { home.pts += m.home_score; away.pts += m.away_score; }
+
       if (m.home_score > m.away_score) {
         home.wins += 1;
         away.losses += 1;
-        home.pts += pointsWin;
-        away.pts += pointsLoss;
+        home.pts += isClipet ? 8 : pointsWin;
+        away.pts += isClipet ? 2 : pointsLoss;
       } else if (m.home_score < m.away_score) {
         away.wins += 1;
         home.losses += 1;
-        away.pts += pointsWin;
-        home.pts += pointsLoss;
+        away.pts += isClipet ? 8 : pointsWin;
+        home.pts += isClipet ? 2 : pointsLoss;
       } else {
         home.draws += 1;
         away.draws += 1;
-        home.pts += pointsDraw;
-        away.pts += pointsDraw;
+        home.pts += isClipet ? 4 : pointsDraw;
+        away.pts += isClipet ? 4 : pointsDraw;
       }
     }
 
@@ -268,11 +277,16 @@ export default function StandingsPage() {
       gd: r.gf - r.ga,
     }));
 
-    // Tri: points desc, diff buts desc, buts marqués desc, nom asc
     arr.sort((a, b) => {
       if (b.pts !== a.pts) return b.pts - a.pts;
-      if (b.gd !== a.gd) return b.gd - a.gd;
-      if (b.gf !== a.gf) return b.gf - a.gf;
+      if (isClipet) {
+        if (b.gf !== a.gf) return b.gf - a.gf;
+        if (a.ga !== b.ga) return a.ga - b.ga;
+        if ((a.lot ?? 0) !== (b.lot ?? 0)) return (a.lot ?? 0) - (b.lot ?? 0);
+      } else {
+        if (b.gd !== a.gd) return b.gd - a.gd;
+        if (b.gf !== a.gf) return b.gf - a.gf;
+      }
       return a.team_name.localeCompare(b.team_name);
     });
 
@@ -283,7 +297,7 @@ export default function StandingsPage() {
   const standings = useMemo<StandingRow[]>(() => {
     return computeStandingsForTeams(teams);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teams, matches, pointsWin, pointsDraw, pointsLoss]);
+  }, [teams, matches, pointsWin, pointsDraw, pointsLoss, isClipet]);
 
   // ✅ Standings par poule (si poules)
   const standingsByGroup = useMemo(() => {
@@ -392,7 +406,7 @@ export default function StandingsPage() {
 
         <div className="bg-white rounded-xl shadow p-6">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-            <h2 className="font-semibold">Paramètres points</h2>
+            <h2 className="font-semibold">Paramètres points</h2>{isClipet && <p className="text-sm text-red-700 mt-1">Michel Clipet : barème verrouillé à 8/4/2 + 1 point par but. Ce tableau affiche la phase 1 (M1–M45).</p>}
 
             <div className="flex items-center gap-3 text-sm">
               <label className="flex items-center gap-2">

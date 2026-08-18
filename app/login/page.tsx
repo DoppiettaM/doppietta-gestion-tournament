@@ -1,68 +1,7 @@
 "use client";
-
-import { useState } from "react";
-import { supabase } from "../../lib/supabaseClient";
-
-export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [status, setStatus] = useState("");
-
-  async function signUp() {
-    setStatus("Création du compte...");
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) setStatus("Erreur: " + error.message);
-    else setStatus("Compte créé ✅ (vérifie tes emails si confirmation activée).");
-  }
-
-  async function signIn() {
-    setStatus("Connexion...");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setStatus("Erreur: " + error.message);
-    else setStatus("Connecté ✅ (va sur /dashboard).");
-  }
-
-  return (
-    <main className="min-h-screen flex items-center justify-center bg-slate-100">
-      <div className="bg-white shadow-lg rounded-xl p-8 w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center">
-          Doppietta Gestion Tournament
-        </h1>
-
-        <input
-          className="w-full border rounded-lg p-3 mb-4"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          type="email"
-          placeholder="Email"
-        />
-
-        <input
-          className="w-full border rounded-lg p-3 mb-6"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          type="password"
-          placeholder="Mot de passe"
-        />
-
-        <div className="flex flex-col gap-3">
-          <button
-            onClick={signIn}
-            className="bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition"
-          >
-            Se connecter
-          </button>
-
-          <button
-            onClick={signUp}
-            className="bg-gray-200 p-3 rounded-lg hover:bg-gray-300 transition"
-          >
-            Créer un compte
-          </button>
-        </div>
-
-        <p className="text-sm text-center mt-4 text-gray-500">{status}</p>
-      </div>
-    </main>
-  );
-}
+import {useState} from "react"; import {useRouter} from "next/navigation"; import {supabase} from "@/lib/supabaseClient";
+export default function LoginPage(){const router=useRouter();const[email,setEmail]=useState("");const[password,setPassword]=useState("");const[status,setStatus]=useState("");const[busy,setBusy]=useState(false);
+async function signIn(){setBusy(true);const{error}=await supabase.auth.signInWithPassword({email:email.trim(),password});setBusy(false);if(error)return setStatus("Connexion impossible : "+error.message);router.push("/dashboard/tournaments")}
+async function signUp(){setBusy(true);const{data,error}=await supabase.auth.signUp({email:email.trim(),password,options:{emailRedirectTo:`${window.location.origin}/dashboard/tournaments`}});setBusy(false);if(error)return setStatus("Création impossible : "+error.message);setStatus(data.session?"Compte créé.":"Compte créé. Confirmez votre adresse email.");if(data.session)router.push("/dashboard/tournaments")}
+async function forgot(){if(!email.trim())return setStatus("Saisissez d'abord votre adresse email.");setBusy(true);const{error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:`${window.location.origin}/reset-password`});setBusy(false);setStatus(error?"Réinitialisation impossible : "+error.message:"Email de réinitialisation envoyé.")}
+return <main className="min-h-screen bg-slate-950 flex items-center justify-center p-6"><div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-xl"><button onClick={()=>router.push("/")} className="text-sm text-slate-500 mb-5">← Accueil</button><h1 className="text-3xl font-black text-slate-900">Doppietta</h1><p className="text-slate-500 mb-6">Gestion Tournament</p><input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full border rounded-xl p-3 mb-3"/><input type="password" placeholder="Mot de passe" value={password} onChange={e=>setPassword(e.target.value)} className="w-full border rounded-xl p-3 mb-2"/><button onClick={forgot} className="text-sm font-semibold text-blue-600 mb-5">Mot de passe oublié ?</button><button disabled={busy} onClick={signIn} className="w-full bg-blue-600 text-white rounded-xl p-3 font-bold mb-3">Se connecter</button><button disabled={busy} onClick={signUp} className="w-full bg-slate-100 text-slate-900 rounded-xl p-3 font-bold">Créer un compte</button>{status&&<p className="text-sm text-slate-600 mt-4">{status}</p>}</div></main>}
