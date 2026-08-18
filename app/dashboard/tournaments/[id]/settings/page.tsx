@@ -369,14 +369,14 @@ export default function TournamentSettingsPage() {
       title: clean(title),
 
       tournament_date: tournamentDate || null,
-      min_teams: clampInt(minTeams, 2),
-      max_teams: clampInt(maxTeams, 24),
+      min_teams: format === "michel_clipet" ? 10 : clampInt(minTeams, 2),
+      max_teams: format === "michel_clipet" ? 10 : clampInt(maxTeams, 24),
 
       start_time: clean(startTime).slice(0, 5),
       end_time: clean(endTime).slice(0, 5),
 
-      match_duration_min: clampInt(matchDurationMin, 12),
-      rotation_duration_min: clampInt(rotationDurationMin, 3),
+      match_duration_min: format === "michel_clipet" ? 10 : clampInt(matchDurationMin, 12),
+      rotation_duration_min: format === "michel_clipet" ? 3 : clampInt(rotationDurationMin, 3),
 
       num_fields: fieldCount,
       field_names: fieldNames.map((x) => clean(x) || "Terrain"),
@@ -691,9 +691,10 @@ export default function TournamentSettingsPage() {
                 <select className="w-full border rounded-lg p-2" value={format} onChange={(e) => setFormat(e.target.value)}>
                   <option value="round_robin">Round Robin (tous ensemble)</option>
                   <option value="groups_round_robin">Poules (round robin)</option>
+                  <option value="michel_clipet">Challenge Michel Clipet (10 équipes)</option>
                 </select>
                 <div className="text-xs text-gray-500 mt-1">
-                  La génération par poules est gérée dans Planning.
+                  {format === "michel_clipet" ? "Michel Clipet impose 10 équipes, matchs 10 min + rotation 3 min, puis M46–M55." : "La génération par poules est gérée dans Planning."}
                 </div>
               </div>
 

@@ -19,7 +19,23 @@ export default function LoginPage() {
     setStatus("Connexion...");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) setStatus("Erreur: " + error.message);
-    else setStatus("Connecté ✅ (va sur /dashboard).");
+    else window.location.href = "/dashboard/tournaments";
+  }
+
+  async function forgotPassword() {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setStatus("Renseigne ton adresse email avant de demander la réinitialisation.");
+      return;
+    }
+
+    setStatus("Envoi du lien de réinitialisation...");
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    if (error) setStatus("Erreur: " + error.message);
+    else setStatus("Lien envoyé ✅ Consulte tes emails puis ouvre le lien de réinitialisation.");
   }
 
   return (
@@ -58,6 +74,13 @@ export default function LoginPage() {
             className="bg-gray-200 p-3 rounded-lg hover:bg-gray-300 transition"
           >
             Créer un compte
+          </button>
+
+          <button
+            onClick={forgotPassword}
+            className="text-sm text-blue-700 underline underline-offset-4 py-2"
+          >
+            Mot de passe oublié ?
           </button>
         </div>
 

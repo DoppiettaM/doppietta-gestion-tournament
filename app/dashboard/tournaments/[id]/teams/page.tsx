@@ -11,6 +11,7 @@ type TournamentRow = {
   format: string | null;
   group_count: number | null;
   group_names: string[] | null;
+  category?: string | null;
 };
 
 type TeamRow = {
@@ -25,6 +26,9 @@ type TeamRow = {
   group_manual: boolean | null;
   public_sheet_token?: string | null;
   created_at?: string | null;
+  club_name?: string | null;
+  squad_number?: number | null;
+  challenge_disqualified?: boolean | null;
 };
 
 const COLOR_PALETTE: { key: string; label: string; hex: string }[] = [
@@ -156,6 +160,8 @@ export default function TeamsPage() {
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [clubName, setClubName] = useState("");
+  const [squadNumber, setSquadNumber] = useState("1");
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [jerseyStyle, setJerseyStyle] = useState<number>(1);
   const [logoSvg, setLogoSvg] = useState<string>("");
@@ -209,7 +215,7 @@ export default function TeamsPage() {
     const { data, error } = await supabase
       .from("teams")
       .select(
-        "id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
+        "id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at,club_name,squad_number,challenge_disqualified"
       )
       .eq("tournament_id", currentTournamentId)
       .order("created_at", { ascending: true });
@@ -238,7 +244,7 @@ export default function TeamsPage() {
 
       const { data: tData, error: tErr } = await supabase
         .from("tournaments")
-        .select("id,title,max_teams,format,group_count,group_names")
+        .select("id,title,max_teams,format,group_count,group_names,category")
         .eq("id", tournamentId)
         .single();
 
@@ -307,6 +313,11 @@ export default function TeamsPage() {
       logo_svg: finalLogo,
       jersey_style: jerseyStyle,
       jersey_svg: finalJersey,
+      ...(tournament?.format === "michel_clipet" ? {
+        club_name: clean(clubName) || n.replace(/\s+\d+$/, ""),
+        squad_number: Math.max(1, Number(squadNumber) || 1),
+        challenge_disqualified: false,
+      } : {}),
     };
 
     if (showGroups) {
@@ -324,6 +335,8 @@ export default function TeamsPage() {
 
     setName("");
     setEmail("");
+    setClubName("");
+    setSquadNumber("1");
     setSelectedColors([]);
     setJerseyStyle(1);
     setLogoSvg("");
@@ -349,6 +362,13 @@ export default function TeamsPage() {
 
     await refreshTeams(tournamentId);
     setBusy(false);
+  }
+
+  async function toggleDisqualified(team: TeamRow) {
+    const next = !Boolean(team.challenge_disqualified);
+    const { error } = await supabase.from("teams").update({ challenge_disqualified: next }).eq("id", team.id);
+    if (error) return setStatus("Erreur statut Challenge: " + error.message);
+    setTeams((prev) => prev.map((x) => x.id === team.id ? { ...x, challenge_disqualified: next } : x));
   }
 
   async function setTeamGroup(teamId: string, groupIdx: number) {
@@ -501,6 +521,26 @@ export default function TeamsPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
+
+
+              {tournament?.format === "michel_clipet" && (
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    className="col-span-2 border rounded-lg px-3 py-2 w-full"
+                    placeholder="Nom du club (pour classement Challenge)"
+                    value={clubName}
+                    onChange={(e) => setClubName(e.target.value)}
+                  />
+                  <input
+                    type="number" min={1} max={20}
+                    className="border rounded-lg px-3 py-2 w-full"
+                    placeholder="N°"
+                    value={squadNumber}
+                    onChange={(e) => setSquadNumber(e.target.value)}
+                    title="Équipe 1, équipe 2…"
+                  />
+                </div>
+              )}
 
               <input
                 className="border rounded-lg px-3 py-2 w-full"
@@ -686,6 +726,12 @@ export default function TeamsPage() {
                               {idx + 1}. {t.name ?? "Équipe"}
                             </div>
                             <div className="text-xs text-gray-500 truncate">{t.email ?? "—"}</div>
+                            {tournament?.format === "michel_clipet" && (
+                              <div className="text-xs text-blue-700 font-semibold">
+                                {t.club_name || t.name} · équipe {t.squad_number ?? 1}
+                                {t.challenge_disqualified ? " · DISQUALIFIÉE" : ""}
+                              </div>
+                            )}
 
                             {showGroups && (
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
@@ -720,6 +766,16 @@ export default function TeamsPage() {
                                 </option>
                               ))}
                             </select>
+                          )}
+
+                          {tournament?.format === "michel_clipet" && (
+                            <button
+                              onClick={() => toggleDisqualified(t)}
+                              className={`px-3 py-2 rounded-lg text-sm ${t.challenge_disqualified ? "bg-amber-500 text-white" : "bg-gray-200"}`}
+                              title="Absent / disqualifié = 0 point Challenge"
+                            >
+                              {t.challenge_disqualified ? "Réintégrer" : "0 pt"}
+                            </button>
                           )}
 
                           <button

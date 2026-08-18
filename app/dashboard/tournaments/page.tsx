@@ -175,6 +175,13 @@ export default function TournamentsPage() {
             </button>
 
             <button
+              onClick={() => router.push("/dashboard/challenges")}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+            >
+              🏆 Challenges
+            </button>
+
+            <button
               onClick={() => router.push("/dashboard/create")}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
             >

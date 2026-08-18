@@ -24,6 +24,7 @@ type TournamentRow = {
 
 type MatchRow = {
   id: string;
+  match_number?: number | null;
   start_time: string;
   field_idx: number;
   status: string;
@@ -344,7 +345,7 @@ export default function ScreenPage() {
     const { data, error } = await supabase
       .from("matches")
       .select(
-        "id,start_time,field_idx,status,home_score,away_score,home_team_id,away_team_id,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)"
+        "id,match_number,start_time,field_idx,status,home_score,away_score,home_team_id,away_team_id,home:home_team_id(name,group_idx),away:away_team_id(name,group_idx)"
       )
       .eq("tournament_id", tournamentId)
       .order("start_time", { ascending: true })
@@ -491,7 +492,7 @@ export default function ScreenPage() {
       >
         <div className="flex items-center justify-between gap-1">
           <div className={`font-extrabold text-slate-500 truncate ${compact ? "text-[9px]" : "text-[10px]"}`}>
-            ⏱️ {timeHHMM(m.start_time)}
+            {m.match_number ? `M${m.match_number} · ` : ""}⏱️ {timeHHMM(m.start_time)}
           </div>
           <div className={`font-extrabold text-slate-500 truncate ${compact ? "text-[9px]" : "text-[10px]"}`}>
             🏟️ {fieldNameOnly(m.field_idx)}
