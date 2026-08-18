@@ -188,6 +188,22 @@ export default function HomePage() {
     router.push("/dashboard/tournaments");
   }
 
+  async function handleForgotPassword() {
+    setStatus("");
+    const e = clean(email);
+
+    if (!isValidEmail(e)) return setStatus("⚠️ Renseigne un email valide.");
+
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(e, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+
+    if (error) return setStatus("❌ Réinitialisation impossible: " + error.message);
+    setStatus("✅ Lien de réinitialisation envoyé. Consulte tes emails.");
+  }
+
   async function handleSignupTrial() {
     setStatus("");
     const e = clean(email);
@@ -358,13 +374,22 @@ export default function HomePage() {
                 )}
 
                 {mode === "login" ? (
-                  <button
-                    onClick={handleLogin}
-                    disabled={busy}
-                    className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-extrabold text-slate-900 hover:bg-slate-100 transition disabled:opacity-60"
-                  >
-                    {busy ? "..." : "Se connecter →"}
-                  </button>
+                  <div className="space-y-2">
+                    <button
+                      onClick={handleLogin}
+                      disabled={busy}
+                      className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-extrabold text-slate-900 hover:bg-slate-100 transition disabled:opacity-60"
+                    >
+                      {busy ? "..." : "Se connecter →"}
+                    </button>
+                    <button
+                      onClick={handleForgotPassword}
+                      disabled={busy}
+                      className="w-full py-2 text-sm font-semibold text-blue-200 underline underline-offset-4 disabled:opacity-60"
+                    >
+                      Mot de passe oublié ?
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={handleSignupTrial}
