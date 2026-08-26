@@ -166,7 +166,7 @@ export default function TournamentsPage() {
             {status && <p className="text-sm text-amber-700 mt-2">{status}</p>}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => router.push("/dashboard")}
               className="bg-gray-200 px-4 py-2 rounded-lg hover:bg-gray-300 transition"
@@ -179,6 +179,13 @@ export default function TournamentsPage() {
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
             >
               ➕ Créer un tournoi
+            </button>
+
+            <button
+              onClick={() => router.push("/dashboard/challenges")}
+              className="bg-amber-500 text-slate-950 px-4 py-2 rounded-lg hover:bg-amber-400 transition font-semibold"
+            >
+              🏆 Mes challenges
             </button>
 
             <button
