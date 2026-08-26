@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../../lib/supabaseClient";
+import { buildKnockoutPlaceholders, chooseRestedReferee, prioritizeSimilarFirstMatches } from "@/lib/competition";
 
 type Pause = { from: string; to: string };
 
@@ -30,6 +31,8 @@ type Tournament = {
   format: string | null; // "round_robin" | "groups_round_robin"
   group_count: number | null; // 1..8
   group_names: string[] | null;
+  bracket_config: { qualifiers_per_group?: number } | null;
+  referee_rest_slots: number | null;
 };
 
 type Team = { id: string; name: string; group_idx?: number | null };
@@ -38,10 +41,17 @@ type MatchRow = {
   id: string;
   start_time: string;
   field_idx: number;
-  home_team_id: string;
-  away_team_id: string;
+  home_team_id: string | null;
+  away_team_id: string | null;
   home: { name: string } | null;
   away: { name: string } | null;
+  referee_team_id?: string | null;
+  referee?: { name: string } | null;
+  stage?: string | null;
+  round_label?: string | null;
+  match_number?: number | null;
+  home_source_label?: string | null;
+  away_source_label?: string | null;
 };
 
 function normHHMM(t: string) {
@@ -130,6 +140,7 @@ export default function SchedulePage() {
   // ✅ édition manuelle
   const [editMode, setEditMode] = useState(false);
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
+  const [selectedListMatch, setSelectedListMatch] = useState<string | null>(null);
   const originalPositionsRef = useRef<Map<string, { start: string; field: number }>>(new Map());
 
   const slotMinutes = useMemo(() => {
@@ -143,7 +154,7 @@ export default function SchedulePage() {
     return t.field_names ?? Array.from({ length: count }, (_, i) => `Terrain ${i + 1}`);
   }, [t]);
 
-  const showGroups = useMemo(() => (t?.format ?? "") === "groups_round_robin", [t]);
+  const showGroups = useMemo(() => ["groups_round_robin", "hybrid"].includes(t?.format ?? ""), [t]);
   const groupCount = useMemo(() => clampInt(Number(t?.group_count ?? 1), 1, 8), [t]);
   const groupNames = useMemo(() => {
     const raw = Array.isArray(t?.group_names) ? (t?.group_names as any[]) : [];
@@ -305,7 +316,7 @@ export default function SchedulePage() {
       const { data, error } = await supabase
         .from("tournaments")
         .select(
-          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,pauses,field_pauses,format,group_count,group_names"
+          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,pauses,field_pauses,format,group_count,group_names,bracket_config,referee_rest_slots"
         )
         .eq("id", tournamentId)
         .single();
@@ -335,7 +346,7 @@ export default function SchedulePage() {
   async function refreshMatches() {
     const { data, error } = await supabase
       .from("matches")
-      .select("id,start_time,field_idx,home_team_id,away_team_id,home:home_team_id(name),away:away_team_id(name)")
+      .select("id,start_time,field_idx,home_team_id,away_team_id,referee_team_id,stage,round_label,match_number,home_source_label,away_source_label,home:home_team_id(name),away:away_team_id(name),referee:referee_team_id(name)")
       .eq("tournament_id", tournamentId)
       .order("start_time", { ascending: true })
       .order("field_idx", { ascending: true });
@@ -389,12 +400,12 @@ export default function SchedulePage() {
       const set = byTime.get(hhmm)!;
       const a = m.home_team_id;
       const b = m.away_team_id;
-      if (set.has(a) || set.has(b)) {
+      if ((a && set.has(a)) || (b && set.has(b))) {
         setStatus(`❌ Invalide: une équipe est présente 2 fois sur le créneau ${hhmm}.`);
         return;
       }
-      set.add(a);
-      set.add(b);
+      if (a) set.add(a);
+      if (b) set.add(b);
     }
 
     if (updates.length === 0) {
@@ -423,6 +434,37 @@ export default function SchedulePage() {
     setSelectedCell(null);
     setStatus("✅ Modifications enregistrées.");
     await refreshMatches();
+  }
+
+  async function deleteScheduledMatch(matchId: string) {
+    if (!window.confirm("Supprimer ce match du planning ?")) return;
+    const { error } = await supabase.from("matches").delete().eq("id", matchId);
+    if (error) return setStatus("Erreur suppression: " + error.message);
+    if (selectedListMatch === matchId) setSelectedListMatch(null);
+    await refreshMatches(); setStatus("Match supprimé.");
+  }
+
+  async function duplicateScheduledMatch(match: MatchRow) {
+    const occupied = new Set(matches.map(m => `${normHHMM(m.start_time)}|${m.field_idx}`));
+    const slots = timeline.flatMap(start => fieldNames.map((_, i) => ({ start, fieldIdx: i + 1 }))).filter(slot => !isPaused(slot.fieldIdx, slot.start));
+    const free = slots.find(slot => !occupied.has(`${slot.start}|${slot.fieldIdx}`) && timeToMin(slot.start) >= timeToMin(normHHMM(match.start_time)));
+    if (!free) return setStatus("Aucun créneau libre après ce match pour placer la copie.");
+    const { error } = await supabase.from("matches").insert({ tournament_id: tournamentId, home_team_id: match.home_team_id, away_team_id: match.away_team_id, field_idx: free.fieldIdx, start_time: free.start, stage: match.stage ?? "league", round_label: `${match.round_label ?? "Match"} · copie`, home_source_label: match.home_source_label, away_source_label: match.away_source_label, schedule_order: matches.length + 1 });
+    if (error) return setStatus("Erreur duplication: " + error.message);
+    await refreshMatches(); setStatus("Match dupliqué sur le prochain créneau libre.");
+  }
+
+  async function insertSelectedBefore(targetId: string) {
+    if (!selectedListMatch || selectedListMatch === targetId) return;
+    const ordered = [...matches].sort((a, b) => timeToMin(normHHMM(a.start_time)) - timeToMin(normHHMM(b.start_time)) || a.field_idx - b.field_idx);
+    const sourceIndex = ordered.findIndex(m => m.id === selectedListMatch); const targetIndex = ordered.findIndex(m => m.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const positions = ordered.map(m => ({ start_time: normHHMM(m.start_time), field_idx: m.field_idx }));
+    const [source] = ordered.splice(sourceIndex, 1); ordered.splice(targetIndex, 0, source);
+    const results = await Promise.all(ordered.map((m, index) => supabase.from("matches").update({ ...positions[index], schedule_order: index + 1 }).eq("id", m.id)));
+    const error = results.find(result => result.error)?.error;
+    if (error) return setStatus("Erreur insertion: " + error.message);
+    setSelectedListMatch(null); await refreshMatches(); setStatus("Match inséré, les suivants ont été décalés.");
   }
 
   function cellKey(hhmm: string, fieldIdx: number) {
@@ -528,7 +570,13 @@ export default function SchedulePage() {
     // Génération des paires
     let sequence: Array<{ a: string; b: string; groupIdx: number }> = [];
 
-    if (showGroups) {
+    if (t.format === "single_elimination") {
+      if ((teams.length & (teams.length - 1)) !== 0) {
+        return setStatus("Élimination directe: le nombre d’équipes doit être une puissance de 2 (4, 8, 16…). Utilisez le format hybride pour gérer des qualifiés ou des exemptions.");
+      }
+      sequence = [];
+      for (let i = 0; i < teams.length; i += 2) sequence.push({ a: teams[i].id, b: teams[i + 1].id, groupIdx: 1 });
+    } else if (showGroups) {
       // regrouper par poule
       const groups = new Map<number, Team[]>();
       for (const tm of teams) {
@@ -551,6 +599,8 @@ export default function SchedulePage() {
       const pairs = roundRobinPairs(teams.map((x) => x.id));
       sequence = pairs.map((p) => ({ a: p.a, b: p.b, groupIdx: 1 }));
     }
+
+    sequence = prioritizeSimilarFirstMatches(sequence, teams, 2).map(pair => ({ ...pair, groupIdx: pair.groupIdx ?? 1 }));
 
     const mustMatches = sequence.length;
     if (mustMatches > totalPlayableSlots) {
@@ -577,6 +627,7 @@ export default function SchedulePage() {
 
 // Placement “contraintes” (anti-enchaînement + équité stricte)
 const lastTimeIndex = new Map<string, number>();
+const lastActivityIndex = new Map<string, number>();
 const busyAtTime = new Map<string, Set<string>>();
 const fieldUsage = new Map<number, number>(); // équilibrage terrain
 
@@ -589,6 +640,7 @@ for (const tm of teams) {
 
   playedCount.set(tm.id, 0);
   lastTimeIndex.set(tm.id, -9999);
+  lastActivityIndex.set(tm.id, -9999);
 
   if (!playedCountByGroup.has(g)) playedCountByGroup.set(g, new Map());
   playedCountByGroup.get(g)!.set(tm.id, 0);
@@ -600,8 +652,13 @@ const scheduled: Array<{
   tournament_id: string;
   home_team_id: string;
   away_team_id: string;
+  referee_team_id: string | null;
   field_idx: number;
   start_time: string;
+  match_number: number;
+  stage: string;
+  round_label: string;
+  schedule_order: number;
 }> = [];
 
 function minMaxGlobalAfter(a: string, b: string) {
@@ -719,12 +776,18 @@ for (const slot of allSlots) {
   const chosen = sequence[ptr];
   const gChosen = clampInt(Number(chosen.groupIdx ?? 1), 1, groupCount);
 
+  const refereeId = chooseRestedReferee(teams.map(team => team.id), new Set([chosen.a, chosen.b]), lastActivityIndex, slot.timeIndex, Number(t.referee_rest_slots ?? 1));
   scheduled.push({
     tournament_id: tournamentId,
     home_team_id: chosen.a,
     away_team_id: chosen.b,
     field_idx: slot.fieldIdx,
     start_time: slot.start,
+    referee_team_id: refereeId,
+    match_number: scheduled.length + 1,
+    stage: t.format === "single_elimination" ? "knockout" : showGroups ? "group" : "league",
+    round_label: t.format === "single_elimination" ? (teams.length === 2 ? "Finale" : teams.length === 4 ? "Demi-finale" : teams.length === 8 ? "Quart de finale" : "Premier tour") : showGroups ? (groupNames[gChosen - 1] ?? `Poule ${gChosen}`) : `Journée`,
+    schedule_order: scheduled.length + 1,
   });
 
   busySet.add(chosen.a);
@@ -732,6 +795,9 @@ for (const slot of allSlots) {
 
   lastTimeIndex.set(chosen.a, slot.timeIndex);
   lastTimeIndex.set(chosen.b, slot.timeIndex);
+  lastActivityIndex.set(chosen.a, slot.timeIndex);
+  lastActivityIndex.set(chosen.b, slot.timeIndex);
+  if (refereeId) lastActivityIndex.set(refereeId, slot.timeIndex);
 
   playedCount.set(chosen.a, (playedCount.get(chosen.a) ?? 0) + 1);
   playedCount.set(chosen.b, (playedCount.get(chosen.b) ?? 0) + 1);
@@ -753,6 +819,17 @@ for (const slot of allSlots) {
       const chunk = scheduled.slice(i, i + chunkSize);
       const { error } = await supabase.from("matches").insert(chunk);
       if (error) return setStatus("Erreur insert matches: " + error.message);
+    }
+
+    if (t.format === "hybrid" || t.format === "single_elimination") {
+      const qualifierCount = t.format === "hybrid" ? groupCount * Math.max(1, Number(t.bracket_config?.qualifiers_per_group ?? 2)) : teams.length;
+      const fullBracket = buildKnockoutPlaceholders(qualifierCount, t.format === "hybrid" ? scheduled.length + 1 : 1);
+      const placeholders = t.format === "single_elimination" ? fullBracket.filter(match => match.matchNumber > teams.length / 2) : fullBracket;
+      const freeSlots = allSlots.filter(slot => !scheduled.some(m => m.start_time === slot.start && m.field_idx === slot.fieldIdx));
+      if (placeholders.length > freeSlots.length) return setStatus(`Phase de poules créée, mais il manque ${placeholders.length - freeSlots.length} créneau(x) pour le tableau final.`);
+      const rows = placeholders.map((match, index) => ({ tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: freeSlots[index].fieldIdx, start_time: freeSlots[index].start, match_number: match.matchNumber, stage: "knockout", round_label: match.roundLabel, home_source_label: match.homeSource, away_source_label: match.awaySource, schedule_order: scheduled.length + index + 1 }));
+      const { error } = await supabase.from("matches").insert(rows);
+      if (error) return setStatus("Poules créées, erreur tableau final: " + error.message);
     }
 
     setStatus(`OK ✅ Matchs générés: ${scheduled.length}.`);
@@ -948,9 +1025,11 @@ for (const slot of allSlots) {
                                 <div className="text-xs font-semibold mb-1 text-gray-600">
                                   {editMode ? "CLIQUE POUR DÉPLACER / ÉCHANGER" : "MATCH"}
                                 </div>
-                                <div className="font-semibold text-gray-900">{match.home?.name ?? "Équipe A"}</div>
+                                <div className="text-xs text-amber-700 font-bold">{match.round_label ?? "MATCH"}</div>
+                                <div className="font-semibold text-gray-900">{match.home?.name ?? match.home_source_label ?? "Équipe A"}</div>
                                 <div className="text-sm text-gray-700">vs</div>
-                                <div className="font-semibold text-gray-900">{match.away?.name ?? "Équipe B"}</div>
+                                <div className="font-semibold text-gray-900">{match.away?.name ?? match.away_source_label ?? "Équipe B"}</div>
+                                {match.referee?.name && <div className="text-xs text-gray-500 mt-2">Arbitre: {match.referee.name}</div>}
                               </button>
                             </td>
                           );
@@ -1004,13 +1083,19 @@ for (const slot of allSlots) {
             ) : (
               <div className="space-y-2">
                 {matches.map((m) => (
-                  <div key={m.id} className="border rounded-lg p-3 flex items-center justify-between gap-3">
+                  <div key={m.id} className={`border rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap ${selectedListMatch === m.id ? "border-amber-400 bg-amber-50" : ""}`}>
                     <div className="text-sm text-gray-600">
                       <strong>{normHHMM(m.start_time)}</strong> ·{" "}
                       {fieldNames[(m.field_idx ?? 1) - 1] ?? `Terrain ${m.field_idx}`}
                     </div>
                     <div className="font-semibold">
-                      {(m.home?.name ?? "Équipe A")} vs {(m.away?.name ?? "Équipe B")}
+                      {(m.home?.name ?? m.home_source_label ?? "Équipe A")} vs {(m.away?.name ?? m.away_source_label ?? "Équipe B")}
+                    </div>
+                    <div className="flex gap-2 text-xs">
+                      <button onClick={() => setSelectedListMatch(selectedListMatch === m.id ? null : m.id)} className="bg-slate-900 text-white px-3 py-2 rounded-lg">{selectedListMatch === m.id ? "Sélectionné" : "Sélectionner"}</button>
+                      {selectedListMatch && selectedListMatch !== m.id && <button onClick={() => insertSelectedBefore(m.id)} className="bg-amber-400 px-3 py-2 rounded-lg font-bold">Insérer avant</button>}
+                      <button onClick={() => duplicateScheduledMatch(m)} className="bg-gray-200 px-3 py-2 rounded-lg">Dupliquer</button>
+                      <button onClick={() => deleteScheduledMatch(m.id)} className="bg-red-100 text-red-700 px-3 py-2 rounded-lg">Supprimer</button>
                     </div>
                   </div>
                 ))}

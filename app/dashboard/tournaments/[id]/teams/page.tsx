@@ -17,6 +17,7 @@ type TeamRow = {
   id: string;
   name: string | null;
   email: string | null;
+  challenge_name: string | null;
   colors: string[] | null;
   jersey_style: number | null;
   logo_svg: string | null;
@@ -156,6 +157,7 @@ export default function TeamsPage() {
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [challengeName, setChallengeName] = useState("");
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [jerseyStyle, setJerseyStyle] = useState<number>(1);
   const [logoSvg, setLogoSvg] = useState<string>("");
@@ -209,7 +211,7 @@ export default function TeamsPage() {
     const { data, error } = await supabase
       .from("teams")
       .select(
-        "id,name,email,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
+        "id,name,email,challenge_name,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
       )
       .eq("tournament_id", currentTournamentId)
       .order("created_at", { ascending: true });
@@ -303,6 +305,7 @@ export default function TeamsPage() {
       tournament_id: tournamentId,
       name: n,
       email: e || null,
+      challenge_name: clean(challengeName) || n,
       colors: selectedColors.slice(0, 3),
       logo_svg: finalLogo,
       jersey_style: jerseyStyle,
@@ -324,6 +327,7 @@ export default function TeamsPage() {
 
     setName("");
     setEmail("");
+    setChallengeName("");
     setSelectedColors([]);
     setJerseyStyle(1);
     setLogoSvg("");
@@ -508,6 +512,18 @@ export default function TeamsPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
+
+              <div>
+                <input
+                  className="border rounded-lg px-3 py-2 w-full"
+                  placeholder="Nom d’équipe pour le challenge"
+                  value={challengeName}
+                  onChange={(e) => setChallengeName(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Utilisez exactement le même nom dans chaque tournoi (ex. PSG). À défaut, le nom de l’équipe sera utilisé.
+                </p>
+              </div>
 
               <div>
                 <div className="text-sm font-semibold mb-2">Couleurs (1 à 3)</div>
