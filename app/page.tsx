@@ -150,7 +150,7 @@ export default function HomePage() {
   const [status, setStatus] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -215,6 +215,25 @@ export default function HomePage() {
 
     const { data: u2 } = await supabase.auth.getUser();
     if (u2?.user) router.push("/dashboard/tournaments");
+  }
+
+  async function handleForgotPassword() {
+    setStatus("");
+    const e = clean(email);
+
+    if (!isValidEmail(e)) return setStatus("⚠️ Renseigne ton adresse email.");
+
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(e, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+
+    if (error) return setStatus("❌ Envoi impossible : " + error.message);
+
+    setStatus(
+      "✅ Si un compte correspond à cette adresse, un lien de renouvellement vient d’être envoyé. Pense à vérifier les spams."
+    );
   }
 
   async function handleRequestPlan(plan: Plan) {
@@ -315,11 +334,18 @@ export default function HomePage() {
                 <div>
                   <div className="text-sm font-semibold text-white/80">Accès à ton espace</div>
                   <div className="text-2xl font-extrabold">
-                    {mode === "login" ? "Connexion" : "Créer un compte Essai"}
+                    {mode === "login"
+                      ? "Connexion"
+                      : mode === "signup"
+                        ? "Créer un compte Essai"
+                        : "Renouveler mon mot de passe"}
                   </div>
                 </div>
                 <button
-                  onClick={() => setMode((m) => (m === "login" ? "signup" : "login"))}
+                  onClick={() => {
+                    setMode((m) => (m === "login" ? "signup" : "login"));
+                    setStatus("");
+                  }}
                   className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold hover:bg-white/15 transition"
                 >
                   {mode === "login" ? "Essai" : "J’ai déjà un compte"}
@@ -339,17 +365,19 @@ export default function HomePage() {
                   />
                 </label>
 
-                <label className="block">
-                  <div className="text-xs font-semibold text-white/70">Mot de passe</div>
-                  <input
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm outline-none focus:border-white/25"
-                    placeholder="min 6 caractères"
-                    type="password"
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  />
-                </label>
+                {mode !== "forgot" && (
+                  <label className="block">
+                    <div className="text-xs font-semibold text-white/70">Mot de passe</div>
+                    <input
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm outline-none focus:border-white/25"
+                      placeholder="min 6 caractères"
+                      type="password"
+                      autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    />
+                  </label>
+                )}
 
                 {status && (
                   <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white/90">
@@ -365,13 +393,48 @@ export default function HomePage() {
                   >
                     {busy ? "..." : "Se connecter →"}
                   </button>
-                ) : (
+                ) : mode === "signup" ? (
                   <button
                     onClick={handleSignupTrial}
                     disabled={busy}
                     className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-extrabold text-slate-900 hover:bg-slate-100 transition disabled:opacity-60"
                   >
                     {busy ? "..." : "Créer mon compte Essai →"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleForgotPassword}
+                    disabled={busy}
+                    className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-extrabold text-slate-900 hover:bg-slate-100 transition disabled:opacity-60"
+                  >
+                    {busy ? "Envoi…" : "Recevoir le lien de renouvellement →"}
+                  </button>
+                )}
+
+                {mode === "login" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("forgot");
+                      setStatus("");
+                      setPassword("");
+                    }}
+                    className="w-full text-center text-sm font-semibold text-blue-200 underline-offset-4 hover:text-white hover:underline"
+                  >
+                    Mot de passe oublié ?
+                  </button>
+                )}
+
+                {mode === "forgot" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("login");
+                      setStatus("");
+                    }}
+                    className="w-full text-center text-sm font-semibold text-blue-200 underline-offset-4 hover:text-white hover:underline"
+                  >
+                    ← Retour à la connexion
                   </button>
                 )}
 
