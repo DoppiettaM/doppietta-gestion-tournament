@@ -570,7 +570,13 @@ export default function SchedulePage() {
     // Génération des paires
     let sequence: Array<{ a: string; b: string; groupIdx: number }> = [];
 
-    if (showGroups) {
+    if (t.format === "single_elimination") {
+      if ((teams.length & (teams.length - 1)) !== 0) {
+        return setStatus("Élimination directe: le nombre d’équipes doit être une puissance de 2 (4, 8, 16…). Utilisez le format hybride pour gérer des qualifiés ou des exemptions.");
+      }
+      sequence = [];
+      for (let i = 0; i < teams.length; i += 2) sequence.push({ a: teams[i].id, b: teams[i + 1].id, groupIdx: 1 });
+    } else if (showGroups) {
       // regrouper par poule
       const groups = new Map<number, Team[]>();
       for (const tm of teams) {
@@ -779,8 +785,8 @@ for (const slot of allSlots) {
     start_time: slot.start,
     referee_team_id: refereeId,
     match_number: scheduled.length + 1,
-    stage: showGroups ? "group" : "league",
-    round_label: showGroups ? (groupNames[gChosen - 1] ?? `Poule ${gChosen}`) : `Journée`,
+    stage: t.format === "single_elimination" ? "knockout" : showGroups ? "group" : "league",
+    round_label: t.format === "single_elimination" ? (teams.length === 2 ? "Finale" : teams.length === 4 ? "Demi-finale" : teams.length === 8 ? "Quart de finale" : "Premier tour") : showGroups ? (groupNames[gChosen - 1] ?? `Poule ${gChosen}`) : `Journée`,
     schedule_order: scheduled.length + 1,
   });
 
@@ -815,9 +821,10 @@ for (const slot of allSlots) {
       if (error) return setStatus("Erreur insert matches: " + error.message);
     }
 
-    if (t.format === "hybrid") {
-      const qualifierCount = groupCount * Math.max(1, Number(t.bracket_config?.qualifiers_per_group ?? 2));
-      const placeholders = buildKnockoutPlaceholders(qualifierCount, scheduled.length + 1);
+    if (t.format === "hybrid" || t.format === "single_elimination") {
+      const qualifierCount = t.format === "hybrid" ? groupCount * Math.max(1, Number(t.bracket_config?.qualifiers_per_group ?? 2)) : teams.length;
+      const fullBracket = buildKnockoutPlaceholders(qualifierCount, t.format === "hybrid" ? scheduled.length + 1 : 1);
+      const placeholders = t.format === "single_elimination" ? fullBracket.filter(match => match.matchNumber > teams.length / 2) : fullBracket;
       const freeSlots = allSlots.filter(slot => !scheduled.some(m => m.start_time === slot.start && m.field_idx === slot.fieldIdx));
       if (placeholders.length > freeSlots.length) return setStatus(`Phase de poules créée, mais il manque ${placeholders.length - freeSlots.length} créneau(x) pour le tableau final.`);
       const rows = placeholders.map((match, index) => ({ tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: freeSlots[index].fieldIdx, start_time: freeSlots[index].start, match_number: match.matchNumber, stage: "knockout", round_label: match.roundLabel, home_source_label: match.homeSource, away_source_label: match.awaySource, schedule_order: scheduled.length + index + 1 }));
