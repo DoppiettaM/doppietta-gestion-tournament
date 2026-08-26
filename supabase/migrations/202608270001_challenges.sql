@@ -34,6 +34,8 @@ alter table public.matches add column if not exists home_source_label text;
 alter table public.matches add column if not exists away_source_label text;
 alter table public.matches add column if not exists referee_team_id uuid references public.teams(id) on delete set null;
 alter table public.matches add column if not exists schedule_order integer;
+alter table public.matches alter column home_team_id drop not null;
+alter table public.matches alter column away_team_id drop not null;
 
 alter table public.challenges enable row level security;
 alter table public.challenge_tournaments enable row level security;

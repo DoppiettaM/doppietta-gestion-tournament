@@ -41,8 +41,8 @@ type MatchRow = {
   id: string;
   start_time: string;
   field_idx: number;
-  home_team_id: string;
-  away_team_id: string;
+  home_team_id: string | null;
+  away_team_id: string | null;
   home: { name: string } | null;
   away: { name: string } | null;
   referee_team_id?: string | null;
@@ -400,12 +400,12 @@ export default function SchedulePage() {
       const set = byTime.get(hhmm)!;
       const a = m.home_team_id;
       const b = m.away_team_id;
-      if (set.has(a) || set.has(b)) {
+      if ((a && set.has(a)) || (b && set.has(b))) {
         setStatus(`❌ Invalide: une équipe est présente 2 fois sur le créneau ${hhmm}.`);
         return;
       }
-      set.add(a);
-      set.add(b);
+      if (a) set.add(a);
+      if (b) set.add(b);
     }
 
     if (updates.length === 0) {
