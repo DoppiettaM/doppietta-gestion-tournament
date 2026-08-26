@@ -26,6 +26,14 @@ alter table public.tournaments add column if not exists standings_tiebreakers js
 alter table public.tournaments add column if not exists knockout_tiebreakers jsonb
   default '["extra_time","penalty_shootout","draw"]'::jsonb;
 alter table public.tournaments add column if not exists bracket_config jsonb default '{}'::jsonb;
+alter table public.tournaments add column if not exists referee_rest_slots smallint not null default 1;
+alter table public.matches add column if not exists match_number integer;
+alter table public.matches add column if not exists stage text not null default 'league';
+alter table public.matches add column if not exists round_label text;
+alter table public.matches add column if not exists home_source_label text;
+alter table public.matches add column if not exists away_source_label text;
+alter table public.matches add column if not exists referee_team_id uuid references public.teams(id) on delete set null;
+alter table public.matches add column if not exists schedule_order integer;
 
 alter table public.challenges enable row level security;
 alter table public.challenge_tournaments enable row level security;
@@ -46,4 +54,3 @@ create index if not exists challenge_tournaments_tournament_idx
   on public.challenge_tournaments(tournament_id);
 create index if not exists teams_challenge_name_idx
   on public.teams(tournament_id, challenge_name);
-

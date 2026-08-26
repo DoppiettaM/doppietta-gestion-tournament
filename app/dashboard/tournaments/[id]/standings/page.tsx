@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../../lib/supabaseClient";
+import { TIE_BREAKER_LABELS, TieBreaker } from "@/lib/challenge";
 
 type TournamentRow = {
   id: string;
   format: string | null; // "round_robin" | "groups_round_robin"
   group_count: number | null; // 1..8
   group_names: string[] | null;
+  standings_tiebreakers: TieBreaker[] | null;
 };
 
 type TeamRow = {
@@ -71,7 +73,7 @@ export default function StandingsPage() {
   async function refreshTournament() {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id,format,group_count,group_names")
+      .select("id,format,group_count,group_names,standings_tiebreakers")
       .eq("id", tournamentId)
       .single();
 
@@ -268,11 +270,17 @@ export default function StandingsPage() {
       gd: r.gf - r.ga,
     }));
 
-    // Tri: points desc, diff buts desc, buts marqués desc, nom asc
+    const rules = tournament?.standings_tiebreakers?.length
+      ? tournament.standings_tiebreakers
+      : (["points", "goal_difference", "goals_scored"] as TieBreaker[]);
     arr.sort((a, b) => {
-      if (b.pts !== a.pts) return b.pts - a.pts;
-      if (b.gd !== a.gd) return b.gd - a.gd;
-      if (b.gf !== a.gf) return b.gf - a.gf;
+      for (const rule of rules) {
+        const diff = rule === "points" ? b.pts - a.pts
+          : rule === "goal_difference" ? b.gd - a.gd
+          : rule === "goals_scored" ? b.gf - a.gf
+          : rule === "goals_conceded" ? a.ga - b.ga : 0;
+        if (diff) return diff;
+      }
       return a.team_name.localeCompare(b.team_name);
     });
 
@@ -453,7 +461,7 @@ export default function StandingsPage() {
               <StandingsTable rows={standings} />
 
               <p className="text-xs text-gray-400 mt-3">
-                Tri automatique: Pts ↓, Diff ↓, BP ↓, Nom ↑. (On ajoutera confrontation directe ensuite si tu veux.)
+                Ordre: {(tournament?.standings_tiebreakers ?? ["points", "goal_difference", "goals_scored"]).map(rule => TIE_BREAKER_LABELS[rule]).join(" → ")}.
               </p>
             </>
           )}
@@ -461,7 +469,7 @@ export default function StandingsPage() {
           {/* Dans le mode poules aussi, on garde la note de tri */}
           {standingsByGroup && (
             <p className="text-xs text-gray-400 mt-3">
-              Tri automatique (par poule): Pts ↓, Diff ↓, BP ↓, Nom ↑. (On ajoutera confrontation directe ensuite si tu veux.)
+              Ordre par poule: {(tournament?.standings_tiebreakers ?? ["points", "goal_difference", "goals_scored"]).map(rule => TIE_BREAKER_LABELS[rule]).join(" → ")}.
             </p>
           )}
         </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { TIE_BREAKER_LABELS, TieBreaker } from "@/lib/challenge";
 
 type Pause = { from: string; to: string };
 
@@ -33,6 +34,10 @@ type TournamentRow = {
   format: string | null;
   group_count: number | null;
   group_names: string[] | null;
+  standings_tiebreakers: TieBreaker[] | null;
+  knockout_tiebreakers: TieBreaker[] | null;
+  bracket_config: Record<string, unknown> | null;
+  referee_rest_slots: number | null;
 
   pauses: any | null;
   field_pauses: any | null;
@@ -74,6 +79,23 @@ function hasAnyPause(fieldPauses: Record<string, Pause[]>) {
   return Object.values(fieldPauses).some((arr) => Array.isArray(arr) && arr.length > 0);
 }
 
+const AVAILABLE_TIES: TieBreaker[] = ["points", "goals_scored", "goal_difference", "goals_conceded", "penalty_shootout", "draw"];
+
+function RuleOrder({ value, setValue, allowPoints }: { value: TieBreaker[]; setValue: (next: TieBreaker[]) => void; allowPoints: boolean }) {
+  const available = AVAILABLE_TIES.filter(rule => (allowPoints || rule !== "points") && !value.includes(rule));
+  function move(index: number, delta: number) {
+    const target = index + delta; if (target < 0 || target >= value.length) return;
+    const next = [...value]; [next[index], next[target]] = [next[target], next[index]]; setValue(next);
+  }
+  return <div className="space-y-2">
+    {value.map((rule, index) => <div key={rule} className="flex justify-between items-center bg-slate-50 rounded-lg p-2 text-sm">
+      <span><strong>{index + 1}.</strong> {TIE_BREAKER_LABELS[rule]}</span>
+      <span><button type="button" onClick={() => move(index, -1)} className="px-2">↑</button><button type="button" onClick={() => move(index, 1)} className="px-2">↓</button><button type="button" disabled={value.length <= 3} onClick={() => setValue(value.filter(x => x !== rule))} className="px-2 text-red-600 disabled:opacity-30">×</button></span>
+    </div>)}
+    <div className="flex flex-wrap gap-2">{available.map(rule => <button type="button" key={rule} disabled={value.length >= 5} onClick={() => setValue([...value, rule])} className="border rounded-lg px-2 py-1 text-xs disabled:opacity-30">＋ {TIE_BREAKER_LABELS[rule]}</button>)}</div>
+  </div>;
+}
+
 export default function TournamentSettingsPage() {
   const router = useRouter();
   const params = useParams();
@@ -108,6 +130,10 @@ export default function TournamentSettingsPage() {
   const [format, setFormat] = useState("round_robin");
   const [groupCount, setGroupCount] = useState("1");
   const [groupNames, setGroupNames] = useState<string[]>(["Poule 1"]);
+  const [standingsTies, setStandingsTies] = useState<TieBreaker[]>(["points", "goal_difference", "goals_scored"]);
+  const [knockoutTies, setKnockoutTies] = useState<TieBreaker[]>(["goal_difference", "penalty_shootout", "draw"]);
+  const [qualifiersPerGroup, setQualifiersPerGroup] = useState("2");
+  const [refereeRestSlots, setRefereeRestSlots] = useState("1");
 
   // Pauses
   const [pausesEnabled, setPausesEnabled] = useState(false);
@@ -162,7 +188,7 @@ export default function TournamentSettingsPage() {
       const { data, error } = await supabase
         .from("tournaments")
         .select(
-          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,min_players_per_team,max_players_per_team,format,group_count,group_names,pauses,field_pauses,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
+          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,min_players_per_team,max_players_per_team,format,group_count,group_names,standings_tiebreakers,knockout_tiebreakers,bracket_config,referee_rest_slots,pauses,field_pauses,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
         )
         .eq("id", tournamentId)
         .single();
@@ -196,6 +222,10 @@ export default function TournamentSettingsPage() {
       setFormat(row.format ?? "round_robin");
       setGroupCount(String(row.group_count ?? 1));
       setGroupNames(row.group_names && row.group_names.length ? row.group_names : ["Poule 1"]);
+      setStandingsTies(row.standings_tiebreakers?.length ? row.standings_tiebreakers : ["points", "goal_difference", "goals_scored"]);
+      setKnockoutTies(row.knockout_tiebreakers?.length ? row.knockout_tiebreakers : ["goal_difference", "penalty_shootout", "draw"]);
+      setQualifiersPerGroup(String(Number(row.bracket_config?.qualifiers_per_group ?? 2)));
+      setRefereeRestSlots(String(row.referee_rest_slots ?? 1));
 
       const fp = safeRecord(row.field_pauses);
       const normalized: Record<string, Pause[]> = {};
@@ -387,6 +417,10 @@ export default function TournamentSettingsPage() {
       format: format || "round_robin",
       group_count: groupsN,
       group_names: groupNames.map((x) => clean(x) || "Poule"),
+      standings_tiebreakers: standingsTies,
+      knockout_tiebreakers: knockoutTies,
+      bracket_config: { qualifiers_per_group: clampInt(qualifiersPerGroup, 2) },
+      referee_rest_slots: Math.max(0, clampInt(refereeRestSlots, 1)),
 
       pauses: finalPausesLegacy,
       field_pauses: finalFieldPauses,
@@ -691,6 +725,8 @@ export default function TournamentSettingsPage() {
                 <select className="w-full border rounded-lg p-2" value={format} onChange={(e) => setFormat(e.target.value)}>
                   <option value="round_robin">Round Robin (tous ensemble)</option>
                   <option value="groups_round_robin">Poules (round robin)</option>
+                  <option value="single_elimination">Élimination directe</option>
+                  <option value="hybrid">Hybride (poules puis élimination)</option>
                 </select>
                 <div className="text-xs text-gray-500 mt-1">
                   La génération par poules est gérée dans Planning.
@@ -703,6 +739,11 @@ export default function TournamentSettingsPage() {
               </div>
             </div>
 
+            {format === "hybrid" && <div>
+              <label className="text-sm text-gray-600">Qualifiés par poule</label>
+              <input className="w-full border rounded-lg p-2" type="number" min={1} max={8} value={qualifiersPerGroup} onChange={(e) => setQualifiersPerGroup(e.target.value)} />
+            </div>}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {groupNames.map((n, i) => (
                 <div key={i}>
@@ -711,6 +752,21 @@ export default function TournamentSettingsPage() {
                 </div>
               ))}
             </div>
+
+            <div className="border rounded-xl p-4 space-y-3">
+              <h3 className="font-semibold">Départage du classement (3 à 5)</h3>
+              <RuleOrder value={standingsTies} setValue={setStandingsTies} allowPoints />
+            </div>
+
+            <div className="border rounded-xl p-4 space-y-3">
+              <h3 className="font-semibold">Égalité en élimination directe</h3>
+              <RuleOrder value={knockoutTies} setValue={setKnockoutTies} allowPoints={false} />
+            </div>
+
+            <label className="block border rounded-xl p-4">
+              <span className="font-semibold">Repos souhaité avant arbitrage (créneaux)</span>
+              <input className="block w-28 border rounded-lg p-2 mt-2" type="number" min={0} max={5} value={refereeRestSlots} onChange={(e) => setRefereeRestSlots(e.target.value)} />
+            </label>
           </div>
 
           <div className="flex justify-end">
