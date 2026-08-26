@@ -20,6 +20,12 @@ create table if not exists public.challenge_tournaments (
   unique (challenge_id, position)
 );
 
+-- Compatibilite avec l'ancien prototype de table challenges deja en production.
+alter table public.challenges add column if not exists scoring_mode text not null default 'placement_points';
+alter table public.challenges add column if not exists default_points_by_rank jsonb not null default '[10,8,6,5,4,3,2,1]'::jsonb;
+alter table public.challenges add column if not exists tie_breakers jsonb not null default '["points","goal_difference","goals_scored"]'::jsonb;
+alter table public.challenges add column if not exists shared_resources boolean not null default false;
+
 alter table public.teams add column if not exists challenge_name text;
 alter table public.tournaments add column if not exists standings_tiebreakers jsonb
   default '["points","goal_difference","goals_scored"]'::jsonb;
