@@ -81,6 +81,12 @@ function hasAnyPause(fieldPauses: Record<string, Pause[]>) {
 
 const AVAILABLE_TIES: TieBreaker[] = ["points", "goals_scored", "goal_difference", "goals_conceded", "penalty_shootout", "draw"];
 
+function validTieBreakers(value: unknown, fallback: TieBreaker[], allowPoints: boolean) {
+  if (!Array.isArray(value)) return fallback;
+  const valid = value.filter((rule): rule is TieBreaker => typeof rule === "string" && AVAILABLE_TIES.includes(rule as TieBreaker) && (allowPoints || rule !== "points"));
+  return valid.length >= 3 ? valid.slice(0, 5) : fallback;
+}
+
 function RuleOrder({ value, setValue, allowPoints }: { value: TieBreaker[]; setValue: (next: TieBreaker[]) => void; allowPoints: boolean }) {
   const available = AVAILABLE_TIES.filter(rule => (allowPoints || rule !== "points") && !value.includes(rule));
   function move(index: number, delta: number) {
@@ -222,8 +228,8 @@ export default function TournamentSettingsPage() {
       setFormat(row.format ?? "round_robin");
       setGroupCount(String(row.group_count ?? 1));
       setGroupNames(row.group_names && row.group_names.length ? row.group_names : ["Poule 1"]);
-      setStandingsTies(row.standings_tiebreakers?.length ? row.standings_tiebreakers : ["points", "goal_difference", "goals_scored"]);
-      setKnockoutTies(row.knockout_tiebreakers?.length ? row.knockout_tiebreakers : ["goal_difference", "penalty_shootout", "draw"]);
+      setStandingsTies(validTieBreakers(row.standings_tiebreakers, ["points", "goal_difference", "goals_scored"], true));
+      setKnockoutTies(validTieBreakers(row.knockout_tiebreakers, ["goals_scored", "goal_difference", "penalty_shootout"], false));
       setQualifiersPerGroup(String(Number(row.bracket_config?.qualifiers_per_group ?? 2)));
       setRefereeRestSlots(String(row.referee_rest_slots ?? 1));
 

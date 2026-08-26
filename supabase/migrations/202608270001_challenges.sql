@@ -30,7 +30,7 @@ alter table public.teams add column if not exists challenge_name text;
 alter table public.tournaments add column if not exists standings_tiebreakers jsonb
   default '["points","goal_difference","goals_scored"]'::jsonb;
 alter table public.tournaments add column if not exists knockout_tiebreakers jsonb
-  default '["extra_time","penalty_shootout","draw"]'::jsonb;
+  default '["goals_scored","goal_difference","penalty_shootout"]'::jsonb;
 alter table public.tournaments add column if not exists bracket_config jsonb default '{}'::jsonb;
 alter table public.tournaments add column if not exists referee_rest_slots smallint not null default 1;
 alter table public.matches add column if not exists match_number integer;
@@ -42,6 +42,10 @@ alter table public.matches add column if not exists referee_team_id uuid referen
 alter table public.matches add column if not exists schedule_order integer;
 alter table public.matches alter column home_team_id drop not null;
 alter table public.matches alter column away_team_id drop not null;
+
+update public.tournaments
+set knockout_tiebreakers = '["goals_scored","goal_difference","penalty_shootout"]'::jsonb
+where knockout_tiebreakers ? 'extra_time';
 
 alter table public.challenges enable row level security;
 alter table public.challenge_tournaments enable row level security;
