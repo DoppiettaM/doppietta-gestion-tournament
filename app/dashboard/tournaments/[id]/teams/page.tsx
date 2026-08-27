@@ -291,6 +291,7 @@ export default function TeamsPage() {
 
     if (!tournamentId) return setStatus("⚠️ ID tournoi introuvable.");
     if (!n) return setStatus("⚠️ Nom d’équipe obligatoire.");
+    if (n.length > 27) return setStatus("⚠️ Le nom est limité à 27 caractères. Pour un nom officiel plus long déjà prévu, utilisez l’import du challenge.");
     if (teams.length >= maxTeams) {
       return setStatus(`⚠️ Limite atteinte: ${maxTeams} équipes max.`);
     }
@@ -502,6 +503,7 @@ export default function TeamsPage() {
               <input
                 className="border rounded-lg px-3 py-2 w-full"
                 placeholder="Nom de l’équipe (obligatoire)"
+                maxLength={27}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
@@ -698,10 +700,10 @@ export default function TeamsPage() {
                             }}
                           />
                           <div className="min-w-0">
-                            <div className="font-semibold truncate">
+                            <div className="font-semibold break-words leading-tight">
                               {idx + 1}. {t.name ?? "Équipe"}
                             </div>
-                            <div className="text-xs text-gray-500 truncate">{t.email ?? "—"}</div>
+                            <div className="text-xs text-gray-500 break-all">{t.email ?? "—"}</div>
 
                             {showGroups && (
                               <div className="mt-1 flex items-center gap-2 flex-wrap">

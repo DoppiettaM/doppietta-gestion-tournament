@@ -14,7 +14,7 @@ export default function CreateChallengePage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<ScoringMode>("placement_points");
-  const [points, setPoints] = useState<number[]>([10, 8, 6, 5, 4, 3, 2, 1]);
+  const [points, setPoints] = useState<number[]>([20, 19, 18, 17, 16, 15, 14, 13, 12, 11]);
   const [ties, setTies] = useState<TieBreaker[]>(["points", "goal_difference", "goals_scored"]);
   const [shared, setShared] = useState(false);
   const [status, setStatus] = useState("");
@@ -66,4 +66,3 @@ export default function CreateChallengePage() {
     </section>
   </div></main>;
 }
-
