@@ -12,6 +12,9 @@ alter table public.challenges add column if not exists display_public boolean no
 alter table public.tournaments add column if not exists scoring_rules jsonb not null
   default '{"win":3,"draw":1,"loss":0,"goal_bonus":0}'::jsonb;
 alter table public.tournaments add column if not exists display_label text;
+alter table public.tournaments drop constraint if exists tournaments_format_check;
+alter table public.tournaments add constraint tournaments_format_check
+  check (format in ('round_robin', 'groups_round_robin', 'knockout', 'hybrid'));
 
 create table if not exists public.challenge_events (
   id uuid primary key default gen_random_uuid(),
