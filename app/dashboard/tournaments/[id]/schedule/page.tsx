@@ -31,7 +31,7 @@ type Tournament = {
   format: string | null; // "round_robin" | "groups_round_robin"
   group_count: number | null; // 1..8
   group_names: string[] | null;
-  bracket_config: { qualifiers_per_group?: number } | null;
+  bracket_config: { qualifiers_per_group?: number; phase_2?: Record<string, unknown> } | null;
   referee_rest_slots: number | null;
 };
 
@@ -813,6 +813,30 @@ for (const slot of allSlots) {
   ptr++;
 }
 
+// Une contrainte d'équité stricte peut ponctuellement bloquer la recherche
+// heuristique. On termine alors la ronde sans abandonner de rencontre, tout en
+// conservant l'interdiction absolue de faire jouer deux fois une équipe au
+// même horaire.
+if (ptr < sequence.length) {
+  for (const slot of allSlots) {
+    if (ptr >= sequence.length) break;
+    if (scheduled.some(m => m.start_time === slot.start && m.field_idx === slot.fieldIdx)) continue;
+    const busy = new Set(scheduled.filter(m => m.start_time === slot.start).flatMap(m => [m.home_team_id, m.away_team_id]));
+    let candidateIndex = -1;
+    for (let i = ptr; i < sequence.length; i++) {
+      if (!busy.has(sequence[i].a) && !busy.has(sequence[i].b)) { candidateIndex = i; break; }
+    }
+    if (candidateIndex < 0) continue;
+    [sequence[ptr], sequence[candidateIndex]] = [sequence[candidateIndex], sequence[ptr]];
+    const chosen = sequence[ptr];
+    const gChosen = clampInt(Number(chosen.groupIdx ?? 1), 1, groupCount);
+    const refereeId = chooseRestedReferee(teams.map(team => team.id), new Set([chosen.a, chosen.b]), lastActivityIndex, slot.timeIndex, Number(t.referee_rest_slots ?? 1));
+    scheduled.push({ tournament_id: tournamentId, home_team_id: chosen.a, away_team_id: chosen.b, field_idx: slot.fieldIdx, start_time: slot.start, referee_team_id: refereeId, match_number: scheduled.length + 1, stage: showGroups ? "group" : "league", round_label: showGroups ? (groupNames[gChosen - 1] ?? `Poule ${gChosen}`) : "Journée", schedule_order: scheduled.length + 1 });
+    lastActivityIndex.set(chosen.a, slot.timeIndex); lastActivityIndex.set(chosen.b, slot.timeIndex); if (refereeId) lastActivityIndex.set(refereeId, slot.timeIndex);
+    ptr++;
+  }
+}
+
     // Insert par chunk
     const chunkSize = 200;
     for (let i = 0; i < scheduled.length; i += chunkSize) {
@@ -821,7 +845,27 @@ for (const slot of allSlots) {
       if (error) return setStatus("Erreur insert matches: " + error.message);
     }
 
-    if (t.format === "hybrid" || t.format === "single_elimination") {
+    if (t.format === "hybrid" && scheduled.length === 45 && t.bracket_config?.phase_2) {
+      const phase2 = [
+        { n: 46, h: "1er de la phase 1", a: "4e de la phase 1", label: "Demi-finale" },
+        { n: 47, h: "2e de la phase 1", a: "3e de la phase 1", label: "Demi-finale" },
+        { n: 48, h: "5e de la phase 1", a: "6e de la phase 1", label: "Poule places 5 à 7" },
+        { n: 49, h: "7e de la phase 1", a: "5e de la phase 1", label: "Poule places 5 à 7" },
+        { n: 50, h: "6e de la phase 1", a: "7e de la phase 1", label: "Poule places 5 à 7" },
+        { n: 51, h: "8e de la phase 1", a: "9e de la phase 1", label: "Poule places 8 à 10" },
+        { n: 52, h: "10e de la phase 1", a: "8e de la phase 1", label: "Poule places 8 à 10" },
+        { n: 53, h: "9e de la phase 1", a: "10e de la phase 1", label: "Poule places 8 à 10" },
+        { n: 54, h: "Perdant M46", a: "Perdant M47", label: "Petite finale" },
+        { n: 55, h: "Vainqueur M46", a: "Vainqueur M47", label: "Finale" },
+      ];
+      const occupied = new Set(scheduled.map(m => `${m.start_time}|${m.field_idx}`));
+      const lastLeagueTime = Math.max(...scheduled.map(m => timeToMin(m.start_time)));
+      const distinctTimes = timeline.filter(time => timeToMin(time) > lastLeagueTime);
+      if (distinctTimes.length < phase2.length) return setStatus("Phase de poule créée, mais la journée est trop courte pour placer les 10 matchs de phase 2.");
+      const rows = phase2.map((match, index) => ({ tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: (index % fieldCount) + 1, start_time: distinctTimes[index], match_number: match.n, stage: match.n >= 46 && match.n <= 47 || match.n >= 54 ? "knockout" : "placement", round_label: match.label, home_source_label: match.h, away_source_label: match.a, schedule_order: 45 + index + 1 })).filter(row => !occupied.has(`${row.start_time}|${row.field_idx}`));
+      const { error } = await supabase.from("matches").insert(rows);
+      if (error) return setStatus("Poules créées, erreur phase 2 Michel Clipet: " + error.message);
+    } else if (t.format === "hybrid" || t.format === "single_elimination") {
       const qualifierCount = t.format === "hybrid" ? groupCount * Math.max(1, Number(t.bracket_config?.qualifiers_per_group ?? 2)) : teams.length;
       const fullBracket = buildKnockoutPlaceholders(qualifierCount, t.format === "hybrid" ? scheduled.length + 1 : 1);
       const placeholders = t.format === "single_elimination" ? fullBracket.filter(match => match.matchNumber > teams.length / 2) : fullBracket;
