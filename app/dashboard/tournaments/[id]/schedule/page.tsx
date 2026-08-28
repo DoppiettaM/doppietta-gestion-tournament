@@ -47,6 +47,7 @@ type MatchRow = {
   away: { name: string } | null;
   referee_team_id?: string | null;
   referee?: { name: string } | null;
+  referee_label?: string | null;
   stage?: string | null;
   round_label?: string | null;
   match_number?: number | null;
@@ -346,7 +347,7 @@ export default function SchedulePage() {
   async function refreshMatches() {
     const { data, error } = await supabase
       .from("matches")
-      .select("id,start_time,field_idx,home_team_id,away_team_id,referee_team_id,stage,round_label,match_number,home_source_label,away_source_label,home:home_team_id(name),away:away_team_id(name),referee:referee_team_id(name)")
+      .select("id,start_time,field_idx,home_team_id,away_team_id,referee_team_id,referee_label,stage,round_label,match_number,home_source_label,away_source_label,home:home_team_id(name),away:away_team_id(name),referee:referee_team_id(name)")
       .eq("tournament_id", tournamentId)
       .order("start_time", { ascending: true })
       .order("field_idx", { ascending: true });
@@ -1073,7 +1074,7 @@ if (ptr < sequence.length) {
                                 <div className="font-semibold text-gray-900">{match.home?.name ?? match.home_source_label ?? "Équipe A"}</div>
                                 <div className="text-sm text-gray-700">vs</div>
                                 <div className="font-semibold text-gray-900">{match.away?.name ?? match.away_source_label ?? "Équipe B"}</div>
-                                {match.referee?.name && <div className="text-xs text-gray-500 mt-2">Arbitre: {match.referee.name}</div>}
+                                {(match.referee_label ?? match.referee?.name) && <div className="text-xs text-gray-500 mt-2">Arbitre: {match.referee_label ?? match.referee?.name}</div>}
                               </button>
                             </td>
                           );
