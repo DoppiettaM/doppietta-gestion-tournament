@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { TIE_BREAKER_LABELS, TieBreaker } from "@/lib/challenge";
+import { MICHEL_CLIPET_PHASES, normalizePhaseConfig, PhaseDestination, TournamentPhaseConfig } from "@/lib/tournamentPhases";
 
 type Pause = { from: string; to: string };
 
@@ -139,6 +140,7 @@ export default function TournamentSettingsPage() {
   const [standingsTies, setStandingsTies] = useState<TieBreaker[]>(["points", "goal_difference", "goals_scored"]);
   const [knockoutTies, setKnockoutTies] = useState<TieBreaker[]>(["goal_difference", "penalty_shootout", "draw"]);
   const [qualifiersPerGroup, setQualifiersPerGroup] = useState("2");
+  const [phaseConfig, setPhaseConfig] = useState<TournamentPhaseConfig>(MICHEL_CLIPET_PHASES);
   const [refereeRestSlots, setRefereeRestSlots] = useState("1");
 
   // Pauses
@@ -231,6 +233,7 @@ export default function TournamentSettingsPage() {
       setStandingsTies(validTieBreakers(row.standings_tiebreakers, ["points", "goal_difference", "goals_scored"], true));
       setKnockoutTies(validTieBreakers(row.knockout_tiebreakers, ["goals_scored", "goal_difference", "penalty_shootout"], false));
       setQualifiersPerGroup(String(Number(row.bracket_config?.qualifiers_per_group ?? 2)));
+      setPhaseConfig(normalizePhaseConfig(row.bracket_config?.phase_config));
       setRefereeRestSlots(String(row.referee_rest_slots ?? 1));
 
       const fp = safeRecord(row.field_pauses);
@@ -425,7 +428,7 @@ export default function TournamentSettingsPage() {
       group_names: groupNames.map((x) => clean(x) || "Poule"),
       standings_tiebreakers: standingsTies,
       knockout_tiebreakers: knockoutTies,
-      bracket_config: { qualifiers_per_group: clampInt(qualifiersPerGroup, 2) },
+      bracket_config: { qualifiers_per_group: clampInt(qualifiersPerGroup, 2), phase_config: phaseConfig },
       referee_rest_slots: Math.max(0, clampInt(refereeRestSlots, 1)),
 
       pauses: finalPausesLegacy,
@@ -745,9 +748,25 @@ export default function TournamentSettingsPage() {
               </div>
             </div>
 
-            {format === "hybrid" && <div>
-              <label className="text-sm text-gray-600">Qualifiés par poule</label>
-              <input className="w-full border rounded-lg p-2" type="number" min={1} max={8} value={qualifiersPerGroup} onChange={(e) => setQualifiersPerGroup(e.target.value)} />
+            {format === "hybrid" && <div className="rounded-2xl border-2 border-sky-200 bg-sky-50 p-5 space-y-5">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div><h3 className="font-black text-lg">Organisation des phases</h3><p className="text-sm text-slate-600">Chaque rang de la phase précédente doit être reversé vers une poule ou un tableau. Cette configuration reste modifiable le jour J.</p></div>
+                <button type="button" onClick={()=>setPhaseConfig(MICHEL_CLIPET_PHASES)} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">Charger le format Michel Clipet</button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="text-sm font-semibold">Nombre de phases<input type="number" min={1} max={6} className="mt-1 block w-full rounded-lg border p-2" value={phaseConfig.phaseCount} onChange={e=>setPhaseConfig(p=>({...p,phaseCount:Math.max(1,Math.min(6,Number(e.target.value))) }))}/></label>
+                <label className="text-sm font-semibold">Composition de la phase suivante<select className="mt-1 block w-full rounded-lg border p-2" value={phaseConfig.assignmentMode} onChange={e=>setPhaseConfig(p=>({...p,assignmentMode:e.target.value as TournamentPhaseConfig["assignmentMode"]}))}><option value="ranking">Selon le classement précédent</option><option value="random">Aléatoire</option><option value="manual">Manuelle dans le dashboard</option></select></label>
+                <label className="text-sm font-semibold">Qualifiés par poule<input className="mt-1 block w-full rounded-lg border p-2" type="number" min={1} max={8} value={qualifiersPerGroup} onChange={(e) => setQualifiersPerGroup(e.target.value)} /></label>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="flex gap-3 rounded-xl border bg-white p-3"><input type="checkbox" checked={phaseConfig.resetPointsAtPhase2} onChange={e=>setPhaseConfig(p=>({...p,resetPointsAtPhase2:e.target.checked}))}/><span><strong className="block">Remettre les points à zéro</strong><small>Les matchs de phase 2 créent un nouveau classement.</small></span></label>
+                <label className="flex gap-3 rounded-xl border bg-white p-3"><input type="checkbox" checked={phaseConfig.carryGoalsToPhase2Tiebreak} onChange={e=>setPhaseConfig(p=>({...p,carryGoalsToPhase2Tiebreak:e.target.checked}))}/><span><strong className="block">Conserver les buts en mémoire</strong><small>BP, BC et différence de la phase 1 servent encore au départage.</small></span></label>
+              </div>
+              <div className="space-y-3">
+                <h4 className="font-bold">Reversements après la phase 1</h4>
+                {phaseConfig.destinations.map((destination,index)=><DestinationEditor key={destination.id} destination={destination} onChange={next=>setPhaseConfig(p=>({...p,destinations:p.destinations.map((d,i)=>i===index?next:d)}))} onRemove={()=>setPhaseConfig(p=>({...p,destinations:p.destinations.filter((_,i)=>i!==index)}))}/>) }
+                <button type="button" onClick={()=>setPhaseConfig(p=>({...p,destinations:[...p.destinations,{id:`destination_${Date.now()}`,label:`Nouvelle destination`,kind:"group",ranks:[],finalPositions:[]}]}))} className="rounded-xl border border-sky-700 px-4 py-2 text-sm font-bold text-sky-800">+ Ajouter une poule ou un tableau</button>
+              </div>
             </div>}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -788,4 +807,16 @@ export default function TournamentSettingsPage() {
       </div>
     </main>
   );
+}
+
+function numberList(value:string){return value.split(/[;,\s]+/).map(Number).filter(n=>Number.isInteger(n)&&n>0)}
+function DestinationEditor({destination,onChange,onRemove}:{destination:PhaseDestination;onChange:(next:PhaseDestination)=>void;onRemove:()=>void}){
+  return <div className="grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-[1.4fr_.7fr_1fr_1fr_auto]">
+    <label className="text-xs font-bold text-slate-600">Nom<input className="mt-1 block w-full rounded-lg border p-2 text-sm text-slate-950" value={destination.label} onChange={e=>onChange({...destination,label:e.target.value})}/></label>
+    <label className="text-xs font-bold text-slate-600">Type<select className="mt-1 block w-full rounded-lg border p-2 text-sm text-slate-950" value={destination.kind} onChange={e=>onChange({...destination,kind:e.target.value as PhaseDestination["kind"]})}><option value="group">Poule</option><option value="knockout">Tableau</option></select></label>
+    <label className="text-xs font-bold text-slate-600">Rangs reversés<input className="mt-1 block w-full rounded-lg border p-2 text-sm text-slate-950" placeholder="5, 6, 7" value={destination.ranks.join(", ")} onChange={e=>onChange({...destination,ranks:numberList(e.target.value)})}/></label>
+    <label className="text-xs font-bold text-slate-600">Places finales<input className="mt-1 block w-full rounded-lg border p-2 text-sm text-slate-950" placeholder="5, 6, 7" value={destination.finalPositions.join(", ")} onChange={e=>onChange({...destination,finalPositions:numberList(e.target.value)})}/></label>
+    <button type="button" onClick={onRemove} className="self-end rounded-lg px-3 py-2 font-bold text-red-600">×</button>
+    {destination.kind==="knockout"&&<label className="md:col-span-5 flex gap-3 text-sm"><input type="checkbox" checked={destination.consolationFinal!==false} onChange={e=>onChange({...destination,consolationFinal:e.target.checked})}/><span>Générer une finale et une petite finale. Les confrontations du modèle Michel Clipet sont 1–4 et 2–3.</span></label>}
+  </div>
 }
