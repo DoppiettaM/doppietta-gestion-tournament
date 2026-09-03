@@ -31,7 +31,7 @@ type Tournament = {
   format: string | null; // "round_robin" | "groups_round_robin"
   group_count: number | null; // 1..8
   group_names: string[] | null;
-  bracket_config: { qualifiers_per_group?: number; phase_2?: Record<string, unknown> } | null;
+  bracket_config: { qualifiers_per_group?: number; phase_2?: Record<string, unknown>; phase_config?: Record<string, unknown> } | null;
   referee_rest_slots: number | null;
 };
 
@@ -846,7 +846,7 @@ if (ptr < sequence.length) {
       if (error) return setStatus("Erreur insert matches: " + error.message);
     }
 
-    if (t.format === "hybrid" && scheduled.length === 45 && t.bracket_config?.phase_2) {
+    if (t.format === "hybrid" && scheduled.length === 45 && (t.bracket_config?.phase_config || t.bracket_config?.phase_2)) {
       const phase2 = [
         { n: 46, h: "1er de la phase 1", a: "4e de la phase 1", label: "Demi-finale" },
         { n: 47, h: "2e de la phase 1", a: "3e de la phase 1", label: "Demi-finale" },
@@ -863,7 +863,7 @@ if (ptr < sequence.length) {
       const lastLeagueTime = Math.max(...scheduled.map(m => timeToMin(m.start_time)));
       const distinctTimes = timeline.filter(time => timeToMin(time) > lastLeagueTime);
       if (distinctTimes.length < phase2.length) return setStatus("Phase de poule créée, mais la journée est trop courte pour placer les 10 matchs de phase 2.");
-      const rows = phase2.map((match, index) => ({ tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: (index % fieldCount) + 1, start_time: distinctTimes[index], match_number: match.n, stage: match.n >= 46 && match.n <= 47 || match.n >= 54 ? "knockout" : "placement", round_label: match.label, home_source_label: match.h, away_source_label: match.a, schedule_order: 45 + index + 1 })).filter(row => !occupied.has(`${row.start_time}|${row.field_idx}`));
+      const rows = phase2.map((match, index) => ({ tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: (index % fieldCount) + 1, start_time: distinctTimes[index], match_number: match.n, stage: match.n >= 46 && match.n <= 47 || match.n >= 54 ? "phase_2_knockout" : match.n <= 50 ? "phase_2_group_a" : "phase_2_group_b", phase_key:"phase_2", destination_key:match.n >= 46 && match.n <= 47 || match.n >= 54 ? "final_table" : match.n <= 50 ? "group_a" : "group_b", round_label: match.label, home_source_label: match.h, away_source_label: match.a, schedule_order: 45 + index + 1 })).filter(row => !occupied.has(`${row.start_time}|${row.field_idx}`));
       const { error } = await supabase.from("matches").insert(rows);
       if (error) return setStatus("Poules créées, erreur phase 2 Michel Clipet: " + error.message);
     } else if (t.format === "hybrid" || t.format === "single_elimination") {
