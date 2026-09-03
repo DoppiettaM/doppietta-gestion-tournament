@@ -11,6 +11,7 @@ type TournamentRow = {
   group_count: number | null; // 1..8
   group_names: string[] | null;
   standings_tiebreakers: TieBreaker[] | null;
+  bracket_config?: { phase_config?: { resetPointsAtPhase2?:boolean; carryGoalsToPhase2Tiebreak?:boolean } } | null;
 };
 
 type TeamRow = {
@@ -26,6 +27,7 @@ type MatchRow = {
   home_score: number | null;
   away_score: number | null;
   status: string;
+  stage:string|null;
 };
 
 type StandingRow = {
@@ -73,7 +75,7 @@ export default function StandingsPage() {
   async function refreshTournament() {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id,format,group_count,group_names,standings_tiebreakers")
+      .select("id,format,group_count,group_names,standings_tiebreakers,bracket_config")
       .eq("id", tournamentId)
       .single();
 
@@ -107,7 +109,7 @@ export default function StandingsPage() {
   async function refreshPlayedMatches() {
     const { data: mData, error: mErr } = await supabase
       .from("matches")
-      .select("id,home_team_id,away_team_id,home_score,away_score,status")
+      .select("id,home_team_id,away_team_id,home_score,away_score,status,stage")
       .eq("tournament_id", tournamentId)
       .eq("status", "played");
 
@@ -198,7 +200,7 @@ export default function StandingsPage() {
   }, [tournamentId]);
 
   // ✅ Détection poules + noms
-  const showGroups = useMemo(() => (tournament?.format ?? "") === "groups_round_robin", [tournament]);
+  const showGroups = useMemo(() => ["groups_round_robin","hybrid"].includes(tournament?.format ?? ""), [tournament]);
 
   const groupNames = useMemo(() => {
     const raw = Array.isArray(tournament?.group_names) ? (tournament?.group_names as any[]) : [];
@@ -211,7 +213,7 @@ export default function StandingsPage() {
     return out;
   }, [tournament]);
 
-  function computeStandingsForTeams(teamSubset: TeamRow[]) {
+  function computeStandingsForTeams(teamSubset: TeamRow[], matchSubset:MatchRow[]=matches, carriedMatches:MatchRow[]=[] ) {
     const byId = new Map<string, StandingRow>();
 
     for (const t of teamSubset) {
@@ -229,7 +231,12 @@ export default function StandingsPage() {
       });
     }
 
-    for (const m of matches) {
+    for (const m of carriedMatches) {
+      if (m.home_score == null || m.away_score == null) continue;
+      const home=byId.get(m.home_team_id),away=byId.get(m.away_team_id); if(!home&&!away)continue;
+      if(home){home.gf+=m.home_score;home.ga+=m.away_score} if(away){away.gf+=m.away_score;away.ga+=m.home_score}
+    }
+    for (const m of matchSubset) {
       if (m.home_score == null || m.away_score == null) continue;
 
       const home = byId.get(m.home_team_id);
@@ -295,7 +302,7 @@ export default function StandingsPage() {
 
   // ✅ Standings par poule (si poules)
   const standingsByGroup = useMemo(() => {
-    if (!showGroups) return null;
+    if (!showGroups || tournament?.format==="hybrid") return null;
 
     const n = clampInt(Number(tournament?.group_count ?? 1), 1, 8);
     if (n <= 1) return null;
@@ -312,6 +319,16 @@ export default function StandingsPage() {
     return groups;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showGroups, tournament, groupNames, teams, matches, pointsWin, pointsDraw, pointsLoss]);
+
+  const hybridSections=useMemo(()=>{
+    if(tournament?.format!=="hybrid")return null;
+    const phaseOneMatches=matches.filter(m=>["group","league","phase_1"].includes(m.stage??""));
+    const phaseOne=computeStandingsForTeams(teams,phaseOneMatches);
+    const carry=tournament.bracket_config?.phase_config?.carryGoalsToPhase2Tiebreak===false?[]:phaseOneMatches;
+    const section=(key:string,label:string)=>{const ms=matches.filter(m=>m.stage===key);const ids=new Set(ms.flatMap(m=>[m.home_team_id,m.away_team_id]).filter(Boolean));return{label,rows:computeStandingsForTeams(teams.filter(t=>ids.has(t.id)),ms,carry)}};
+    return[{label:"Phase 1",rows:phaseOne},section("phase_2_group_a","Phase 2 · Poule A"),section("phase_2_group_b","Phase 2 · Poule B")];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[tournament,teams,matches,pointsWin,pointsDraw,pointsLoss]);
 
   const playedCount = matches.filter((m) => m.home_score != null && m.away_score != null).length;
 
@@ -436,7 +453,7 @@ export default function StandingsPage() {
           </div>
 
           {/* ✅ SI plusieurs poules : une table par poule (nom personnalisé) */}
-          {standingsByGroup ? (
+          {hybridSections ? <div className="space-y-5">{hybridSections.map(section=><div key={section.label} className="border rounded-xl p-4"><h3 className="font-black text-lg mb-3">{section.label}</h3>{section.rows.length?<StandingsTable rows={section.rows}/>:<p className="text-sm text-gray-500">Ce classement apparaîtra dès que les équipes seront reversées dans cette phase.</p>}</div>)}<div className="border rounded-xl p-4"><h3 className="font-black text-lg">Phase 2 · Tableau final</h3><p className="text-sm text-gray-500 mt-1">Demi-finales, petite finale et finale. Le résultat de la finale fixe les places 1–2 et celui de la petite finale les places 3–4.</p></div></div> : standingsByGroup ? (
             <div className="space-y-4">
               {standingsByGroup.map((g) => (
                 <div key={g.groupIdx} className="border rounded-lg p-4">
