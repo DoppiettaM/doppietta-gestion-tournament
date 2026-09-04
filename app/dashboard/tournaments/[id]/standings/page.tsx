@@ -11,6 +11,7 @@ type TournamentRow = {
   group_count: number | null; // 1..8
   group_names: string[] | null;
   standings_tiebreakers: TieBreaker[] | null;
+  scoring_rules: { win?: number; draw?: number; loss?: number; goal_bonus?: number; [key: string]: unknown } | null;
   bracket_config?: { phase_config?: { resetPointsAtPhase2?:boolean; carryGoalsToPhase2Tiebreak?:boolean } } | null;
 };
 
@@ -60,9 +61,18 @@ export default function StandingsPage() {
   const [pointsWin, setPointsWin] = useState(3);
   const [pointsDraw, setPointsDraw] = useState(1);
   const [pointsLoss, setPointsLoss] = useState(0);
+  const [pointsGoal, setPointsGoal] = useState(0);
+  const [pointsDirty, setPointsDirty] = useState(false);
+  const [savingPoints, setSavingPoints] = useState(false);
 
   const refreshTimerRef = useRef<number | null>(null);
   const pollRef = useRef<number | null>(null);
+  const pointsDirtyRef = useRef(false);
+
+  function markPointsDirty() {
+    pointsDirtyRef.current = true;
+    setPointsDirty(true);
+  }
 
   function scheduleRefresh(reason: string) {
     // console.log("standings scheduleRefresh:", reason);
@@ -75,7 +85,7 @@ export default function StandingsPage() {
   async function refreshTournament() {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id,format,group_count,group_names,standings_tiebreakers,bracket_config")
+      .select("id,format,group_count,group_names,standings_tiebreakers,scoring_rules,bracket_config")
       .eq("id", tournamentId)
       .single();
 
@@ -85,8 +95,43 @@ export default function StandingsPage() {
       return null;
     }
 
-    setTournament((data ?? null) as any);
+    const row = (data ?? null) as any as TournamentRow | null;
+    setTournament(row);
+    if (row && !pointsDirtyRef.current) {
+      setPointsWin(Number(row.scoring_rules?.win ?? 3));
+      setPointsDraw(Number(row.scoring_rules?.draw ?? 1));
+      setPointsLoss(Number(row.scoring_rules?.loss ?? 0));
+      setPointsGoal(Number(row.scoring_rules?.goal_bonus ?? 0));
+    }
     return data as any as TournamentRow;
+  }
+
+  async function saveScoringRules() {
+    setSavingPoints(true);
+    setStatus("Enregistrement du barème...");
+    const scoringRules = {
+      ...(tournament?.scoring_rules ?? {}),
+      win: pointsWin,
+      draw: pointsDraw,
+      loss: pointsLoss,
+      goal_bonus: pointsGoal,
+    };
+    const { data, error } = await supabase
+      .from("tournaments")
+      .update({ scoring_rules: scoringRules })
+      .eq("id", tournamentId)
+      .select("scoring_rules")
+      .single();
+
+    setSavingPoints(false);
+    if (error) {
+      setStatus("Erreur d’enregistrement du barème : " + error.message);
+      return;
+    }
+    setTournament((current) => current ? { ...current, scoring_rules: data.scoring_rules } : current);
+    pointsDirtyRef.current = false;
+    setPointsDirty(false);
+    setStatus("Barème enregistré.");
   }
 
   async function refreshTeams() {
@@ -254,6 +299,9 @@ export default function StandingsPage() {
       away.gf += m.away_score;
       away.ga += m.home_score;
 
+      home.pts += m.home_score * pointsGoal;
+      away.pts += m.away_score * pointsGoal;
+
       if (m.home_score > m.away_score) {
         home.wins += 1;
         away.losses += 1;
@@ -298,7 +346,7 @@ export default function StandingsPage() {
   const standings = useMemo<StandingRow[]>(() => {
     return computeStandingsForTeams(teams);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teams, matches, pointsWin, pointsDraw, pointsLoss]);
+  }, [teams, matches, pointsWin, pointsDraw, pointsLoss, pointsGoal]);
 
   // ✅ Standings par poule (si poules)
   const standingsByGroup = useMemo(() => {
@@ -318,7 +366,7 @@ export default function StandingsPage() {
 
     return groups;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showGroups, tournament, groupNames, teams, matches, pointsWin, pointsDraw, pointsLoss]);
+  }, [showGroups, tournament, groupNames, teams, matches, pointsWin, pointsDraw, pointsLoss, pointsGoal]);
 
   const hybridSections=useMemo(()=>{
     if(tournament?.format!=="hybrid")return null;
@@ -328,7 +376,7 @@ export default function StandingsPage() {
     const section=(key:string,label:string)=>{const ms=matches.filter(m=>m.stage===key);const ids=new Set(ms.flatMap(m=>[m.home_team_id,m.away_team_id]).filter(Boolean));return{label,rows:computeStandingsForTeams(teams.filter(t=>ids.has(t.id)),ms,carry)}};
     return[{label:"Phase 1",rows:phaseOne},section("phase_2_group_a","Phase 2 · Poule A"),section("phase_2_group_b","Phase 2 · Poule B")];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[tournament,teams,matches,pointsWin,pointsDraw,pointsLoss]);
+  },[tournament,teams,matches,pointsWin,pointsDraw,pointsLoss,pointsGoal]);
 
   const playedCount = matches.filter((m) => m.home_score != null && m.away_score != null).length;
 
@@ -419,14 +467,14 @@ export default function StandingsPage() {
           <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
             <h2 className="font-semibold">Paramètres points</h2>
 
-            <div className="flex items-center gap-3 text-sm">
+            <div className="flex items-center gap-3 text-sm flex-wrap justify-end">
               <label className="flex items-center gap-2">
                 Victoire
                 <input
                   type="number"
                   className="w-16 border rounded px-2 py-1"
                   value={pointsWin}
-                  onChange={(e) => setPointsWin(Number(e.target.value))}
+                  onChange={(e) => { setPointsWin(Number(e.target.value)); markPointsDirty(); }}
                 />
               </label>
 
@@ -436,7 +484,7 @@ export default function StandingsPage() {
                   type="number"
                   className="w-16 border rounded px-2 py-1"
                   value={pointsDraw}
-                  onChange={(e) => setPointsDraw(Number(e.target.value))}
+                  onChange={(e) => { setPointsDraw(Number(e.target.value)); markPointsDirty(); }}
                 />
               </label>
 
@@ -446,9 +494,29 @@ export default function StandingsPage() {
                   type="number"
                   className="w-16 border rounded px-2 py-1"
                   value={pointsLoss}
-                  onChange={(e) => setPointsLoss(Number(e.target.value))}
+                  onChange={(e) => { setPointsLoss(Number(e.target.value)); markPointsDirty(); }}
                 />
               </label>
+
+              <label className="flex items-center gap-2">
+                But marqué
+                <input
+                  type="number"
+                  className="w-16 border rounded px-2 py-1"
+                  value={pointsGoal}
+                  onChange={(e) => { setPointsGoal(Number(e.target.value)); markPointsDirty(); }}
+                />
+                <span className="text-gray-500">point / but</span>
+              </label>
+
+              <button
+                type="button"
+                onClick={saveScoringRules}
+                disabled={savingPoints || !pointsDirty}
+                className="rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {savingPoints ? "Enregistrement..." : "Enregistrer le barème"}
+              </button>
             </div>
           </div>
 
