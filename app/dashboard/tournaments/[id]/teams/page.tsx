@@ -28,6 +28,7 @@ type TeamRow = {
   group_manual: boolean | null;
   public_sheet_token?: string | null;
   created_at?: string | null;
+  team_number: number | null;
 };
 
 const COLOR_PALETTE: { key: string; label: string; hex: string }[] = [
@@ -166,6 +167,8 @@ export default function TeamsPage() {
   const [logoSvg, setLogoSvg] = useState<string>("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string>("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [existingLogoUrl, setExistingLogoUrl] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [busyAuto, setBusyAuto] = useState(false);
@@ -216,9 +219,10 @@ export default function TeamsPage() {
     const { data, error } = await supabase
       .from("teams")
       .select(
-        "id,name,email,challenge_name,club_name,colors,logo_svg,logo_url,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
+        "id,name,email,challenge_name,club_name,colors,logo_svg,logo_url,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at,team_number"
       )
       .eq("tournament_id", currentTournamentId)
+      .order("team_number", { ascending: true })
       .order("created_at", { ascending: true });
 
     if (error) {
@@ -295,13 +299,14 @@ export default function TeamsPage() {
   }
 
   async function addTeam() {
+    const wasEditing = Boolean(editingId);
     const n = clean(name);
     const e = clean(email);
 
     if (!tournamentId) return setStatus("⚠️ ID tournoi introuvable.");
     if (!n) return setStatus("⚠️ Nom d’équipe obligatoire.");
     if (n.length > 27) return setStatus("⚠️ Le nom est limité à 27 caractères. Pour un nom officiel plus long déjà prévu, utilisez l’import du challenge.");
-    if (teams.length >= maxTeams) {
+    if (!editingId && teams.length >= maxTeams) {
       return setStatus(`⚠️ Limite atteinte: ${maxTeams} équipes max.`);
     }
 
@@ -310,7 +315,7 @@ export default function TeamsPage() {
 
     const finalLogo = logoSvg || genLogoSvg(n, selectedColors);
     const finalJersey = genJerseySvg(jerseyStyle, selectedColors);
-    let logoUrl: string | null = null;
+    let logoUrl: string | null = existingLogoUrl;
     if (logoFile) {
       const path = `teams/${tournamentId}/${crypto.randomUUID()}.png`;
       const { error: uploadError } = await supabase.storage.from("partners").upload(path, logoFile, { contentType: "image/png" });
@@ -336,10 +341,13 @@ export default function TeamsPage() {
       payload.group_manual = false;
     }
 
-    const { error } = await supabase.from("teams").insert(payload);
+    if (!editingId) payload.team_number = teams.length + 1;
+    const { error } = editingId
+      ? await supabase.from("teams").update(payload).eq("id", editingId).eq("tournament_id", tournamentId)
+      : await supabase.from("teams").insert(payload);
 
     if (error) {
-      setStatus("Erreur ajout équipe: " + error.message);
+      setStatus(`Erreur ${editingId ? "modification" : "ajout"} équipe: ` + error.message);
       setBusy(false);
       return;
     }
@@ -353,9 +361,37 @@ export default function TeamsPage() {
     setLogoSvg("");
     if (logoPreview) URL.revokeObjectURL(logoPreview);
     setLogoFile(null); setLogoPreview("");
+    setEditingId(null); setExistingLogoUrl(null);
 
     await refreshTeams(tournamentId);
     setBusy(false);
+    setStatus(wasEditing ? "Équipe modifiée ✅" : "Équipe ajoutée ✅");
+  }
+
+  function startEdit(team: TeamRow) {
+    setEditingId(team.id); setName(team.name ?? ""); setClubName(team.club_name ?? team.name ?? "");
+    setEmail(team.email ?? ""); setChallengeName(team.challenge_name ?? team.name ?? "");
+    setSelectedColors(team.colors ?? []); setJerseyStyle(Number(team.jersey_style ?? 1));
+    setLogoSvg(team.logo_svg ?? ""); setLogoFile(null); setExistingLogoUrl(team.logo_url ?? null); setLogoPreview(team.logo_url ?? "");
+    setStatus("Modification en cours. Enregistrez pour confirmer les changements."); window.scrollTo({top:0,behavior:"smooth"});
+  }
+
+  function cancelEdit() {
+    setEditingId(null); setName(""); setClubName(""); setEmail(""); setChallengeName("");
+    setSelectedColors([]); setJerseyStyle(1); setLogoSvg(""); setLogoFile(null); setLogoPreview(""); setExistingLogoUrl(null); setStatus("");
+  }
+
+  async function moveTeam(index: number, direction: -1 | 1) {
+    const otherIndex = index + direction; if (otherIndex < 0 || otherIndex >= teams.length) return;
+    const current = teams[index], other = teams[otherIndex]; setBusy(true); setStatus("");
+    const currentOrder = Number(current.team_number ?? index + 1), otherOrder = Number(other.team_number ?? otherIndex + 1);
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      supabase.from("teams").update({ team_number: otherOrder }).eq("id", current.id),
+      supabase.from("teams").update({ team_number: currentOrder }).eq("id", other.id),
+    ]);
+    if (e1 || e2) { setBusy(false); setStatus("Erreur de réordonnancement: " + (e1?.message ?? e2?.message)); return; }
+    setTeams(prev => { const next=[...prev]; const moved={...next[index],team_number:otherOrder}; const displaced={...next[otherIndex],team_number:currentOrder}; next[index]=displaced; next[otherIndex]=moved; return next; });
+    setBusy(false); setStatus("Ordre des équipes enregistré ✅");
   }
 
   async function deleteTeam(teamId: string) {
@@ -517,7 +553,7 @@ export default function TeamsPage() {
         </div>
 
         <div className="bg-white rounded-xl shadow p-6 space-y-4">
-          <h2 className="font-semibold">Ajouter une équipe</h2>
+          <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">{editingId ? "Modifier l’inscription de l’équipe" : "Ajouter une équipe"}</h2>{editingId&&<button onClick={cancelEdit} className="text-sm text-slate-600 underline">Annuler la modification</button>}</div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
             <div className="space-y-3">
@@ -635,7 +671,7 @@ export default function TeamsPage() {
 
                   <button
                     type="button"
-                    onClick={() => setLogoSvg("")}
+                    onClick={() => { setLogoSvg(""); setLogoFile(null); setLogoPreview(""); setExistingLogoUrl(null); }}
                     className="bg-gray-200 px-3 py-2 rounded-lg hover:bg-gray-300 transition text-sm"
                     title="Revenir au logo standard auto"
                   >
@@ -653,7 +689,7 @@ export default function TeamsPage() {
                 disabled={busy}
                 className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 w-full"
               >
-                {busy ? "..." : "➕ Ajouter l’équipe"}
+                {busy ? "..." : editingId ? "💾 Enregistrer les modifications" : "➕ Ajouter l’équipe"}
               </button>
 
               {showGroups && (
@@ -752,6 +788,8 @@ export default function TeamsPage() {
                         </div>
 
                         <div className="flex gap-2 shrink-0 items-center flex-wrap justify-end">
+                          <div className="flex gap-1" aria-label="Modifier l’ordre"><button onClick={()=>moveTeam(idx,-1)} disabled={busy||idx===0} className="bg-slate-100 px-2 py-2 rounded-lg disabled:opacity-30" title="Monter l’équipe">↑</button><button onClick={()=>moveTeam(idx,1)} disabled={busy||idx===teams.length-1} className="bg-slate-100 px-2 py-2 rounded-lg disabled:opacity-30" title="Descendre l’équipe">↓</button></div>
+                          <button onClick={()=>startEdit(t)} disabled={busy} className="bg-sky-100 text-sky-800 px-3 py-2 rounded-lg hover:bg-sky-200 transition text-sm" title="Modifier l’inscription">✏️</button>
                           {showGroups && (
                             <select
                               className="border rounded-lg px-2 py-2 bg-white text-sm"
