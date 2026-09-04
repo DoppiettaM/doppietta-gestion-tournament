@@ -202,7 +202,8 @@ export default function PublicScreenPage() {
       if (!byTime.has(t)) byTime.set(t, { allPlayed: true, idx: idx.get(t) ?? 0 });
       const s = byTime.get(t)!;
       const played = (m.status ?? "").toLowerCase() === "played";
-      if (!played) s.allPlayed = false;
+      const hasScore = m.home_score != null && m.away_score != null;
+      if (!played || !hasScore) s.allPlayed = false;
     }
 
     const done: string[] = [];
