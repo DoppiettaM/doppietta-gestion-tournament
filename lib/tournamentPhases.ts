@@ -96,7 +96,7 @@ export function rankMichelFinal(teams:PhaseTeam[],matches:PhaseMatch[],tournamen
   for(const key of ["phase_2_group_a","phase_2_group_b"]){
     const subset=matches.filter(m=>m.stage===key); const ids=new Set(subset.flatMap(m=>[m.home_team_id,m.away_team_id]).filter((x):x is string=>Boolean(x)));
     const rows=rankPhase(teams.filter(t=>ids.has(t.id)),subset,tournamentId,scoring);
-    rows.sort((a,b)=>b.points-a.points||((byId.get(b.id)?.goalDifference??0)-(byId.get(a.id)?.goalDifference??0))||((byId.get(b.id)?.goalsFor??0)-(byId.get(a.id)?.goalsFor??0)));
+    rows.sort((a,b)=>b.points-a.points||(((byId.get(b.id)?.goalDifference??0)+b.goalDifference)-((byId.get(a.id)?.goalDifference??0)+a.goalDifference))||(((byId.get(b.id)?.goalsFor??0)+b.goalsFor)-((byId.get(a.id)?.goalsFor??0)+a.goalsFor)));
     for(const row of rows)if(!ordered.includes(row.id))ordered.push(row.id);
   }
   for(const row of phaseOne)if(!ordered.includes(row.id))ordered.push(row.id);
