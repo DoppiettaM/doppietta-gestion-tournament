@@ -31,6 +31,9 @@ type TournamentRow = {
 
   min_players_per_team: number | null;
   max_players_per_team: number | null;
+  min_staff_per_team: number | null;
+  max_staff_per_team: number | null;
+  venue: string | null;
 
   format: string | null;
   group_count: number | null;
@@ -132,6 +135,9 @@ export default function TournamentSettingsPage() {
 
   const [minPlayers, setMinPlayers] = useState("6");
   const [maxPlayers, setMaxPlayers] = useState("7");
+  const [minStaff, setMinStaff] = useState("1");
+  const [maxStaff, setMaxStaff] = useState("5");
+  const [venue, setVenue] = useState("");
 
   // Format / Poules
   const [format, setFormat] = useState("round_robin");
@@ -196,7 +202,7 @@ export default function TournamentSettingsPage() {
       const { data, error } = await supabase
         .from("tournaments")
         .select(
-          "id,title,tournament_date,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,min_players_per_team,max_players_per_team,format,group_count,group_names,standings_tiebreakers,knockout_tiebreakers,bracket_config,referee_rest_slots,pauses,field_pauses,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
+          "id,title,tournament_date,venue,min_teams,max_teams,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,min_players_per_team,max_players_per_team,min_staff_per_team,max_staff_per_team,format,group_count,group_names,standings_tiebreakers,knockout_tiebreakers,bracket_config,referee_rest_slots,pauses,field_pauses,screen_partner_top_1_url,screen_partner_top_2_url,screen_partner_bottom_1_url,screen_partner_bottom_2_url"
         )
         .eq("id", tournamentId)
         .single();
@@ -211,6 +217,7 @@ export default function TournamentSettingsPage() {
 
       setTitle(row.title ?? "");
       setTournamentDate(row.tournament_date ?? "");
+      setVenue(row.venue ?? "");
 
       setMinTeams(String(row.min_teams ?? 2));
       setMaxTeams(String(row.max_teams ?? 24));
@@ -226,6 +233,8 @@ export default function TournamentSettingsPage() {
 
       setMinPlayers(String(row.min_players_per_team ?? 6));
       setMaxPlayers(String(row.max_players_per_team ?? 7));
+      setMinStaff(String(row.min_staff_per_team ?? 1));
+      setMaxStaff(String(row.max_staff_per_team ?? 5));
 
       setFormat(row.format ?? "round_robin");
       setGroupCount(String(row.group_count ?? 1));
@@ -378,6 +387,10 @@ export default function TournamentSettingsPage() {
     if (minP < 1) return "min joueurs/équipe doit être ≥ 1.";
     if (maxP < 1) return "max joueurs/équipe doit être ≥ 1.";
     if (minP > maxP) return "min joueurs/équipe ne peut pas être > max.";
+    const minS = clampInt(minStaff, 1);
+    const maxS = clampInt(maxStaff, 1);
+    if (minS < 1 || maxS < 1) return "Le nombre d’encadrants doit être ≥ 1.";
+    if (minS > maxS) return "min encadrants/équipe ne peut pas être > max.";
 
     if (pausesEnabled) {
       for (const [k, arr] of Object.entries(fieldPauses)) {
@@ -406,6 +419,7 @@ export default function TournamentSettingsPage() {
 
     const payload: any = {
       title: clean(title),
+      venue: clean(venue) || null,
 
       tournament_date: tournamentDate || null,
       min_teams: clampInt(minTeams, 2),
@@ -422,6 +436,8 @@ export default function TournamentSettingsPage() {
 
       min_players_per_team: clampInt(minPlayers, 6),
       max_players_per_team: clampInt(maxPlayers, 7),
+      min_staff_per_team: clampInt(minStaff, 1),
+      max_staff_per_team: clampInt(maxStaff, 5),
 
       format: format || "round_robin",
       group_count: groupsN,
@@ -551,6 +567,18 @@ export default function TournamentSettingsPage() {
             <div>
               <label className="text-sm text-gray-600">Max joueurs / équipe</label>
               <input className="w-full border rounded-lg p-2" type="number" value={maxPlayers} onChange={(e) => setMaxPlayers(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm text-gray-600">Min encadrants / équipe</label>
+              <input className="w-full border rounded-lg p-2" type="number" min="1" value={minStaff} onChange={(e) => setMinStaff(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm text-gray-600">Max encadrants / équipe</label>
+              <input className="w-full border rounded-lg p-2" type="number" min="1" value={maxStaff} onChange={(e) => setMaxStaff(e.target.value)} />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-sm text-gray-600">Lieu du tournoi</label>
+              <input className="w-full border rounded-lg p-2" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Stade, ville…" />
             </div>
           </div>
 
