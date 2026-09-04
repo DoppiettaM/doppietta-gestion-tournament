@@ -368,6 +368,7 @@ export default function TournamentSettingsPage() {
 
   function validate() {
     if (!clean(title)) return "Le titre est obligatoire.";
+    if (!clean(venue)) return "Le lieu du tournoi est obligatoire : il apparaîtra sur les fiches d’effectif.";
 
     const minT = clampInt(minTeams, 2);
     const maxT = clampInt(maxTeams, 24);
@@ -577,8 +578,9 @@ export default function TournamentSettingsPage() {
               <input className="w-full border rounded-lg p-2" type="number" min="1" value={maxStaff} onChange={(e) => setMaxStaff(e.target.value)} />
             </div>
             <div className="md:col-span-2">
-              <label className="text-sm text-gray-600">Lieu du tournoi</label>
-              <input className="w-full border rounded-lg p-2" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Stade, ville…" />
+              <label className="text-sm text-gray-600">Lieu du tournoi *</label>
+              <input required className="w-full border rounded-lg p-2" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Stade, adresse ou ville" />
+              <p className="text-xs text-gray-500 mt-1">Reporté sur les fiches d’effectif lorsque le tournoi n’est pas rattaché à un challenge.</p>
             </div>
           </div>
 
