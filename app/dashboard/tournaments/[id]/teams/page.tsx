@@ -21,6 +21,8 @@ type TeamRow = {
   colors: string[] | null;
   jersey_style: number | null;
   logo_svg: string | null;
+  logo_url: string | null;
+  club_name: string | null;
   jersey_svg: string | null;
   group_idx: number | null;
   group_manual: boolean | null;
@@ -158,9 +160,12 @@ export default function TeamsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [challengeName, setChallengeName] = useState("");
+  const [clubName, setClubName] = useState("");
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [jerseyStyle, setJerseyStyle] = useState<number>(1);
   const [logoSvg, setLogoSvg] = useState<string>("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string>("");
 
   const [busy, setBusy] = useState(false);
   const [busyAuto, setBusyAuto] = useState(false);
@@ -211,7 +216,7 @@ export default function TeamsPage() {
     const { data, error } = await supabase
       .from("teams")
       .select(
-        "id,name,email,challenge_name,colors,logo_svg,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
+        "id,name,email,challenge_name,club_name,colors,logo_svg,logo_url,jersey_style,jersey_svg,group_idx,group_manual,public_sheet_token,created_at"
       )
       .eq("tournament_id", currentTournamentId)
       .order("created_at", { ascending: true });
@@ -277,12 +282,16 @@ export default function TeamsPage() {
   }
 
   async function onUploadLogo(file: File) {
-    const txt = await file.text();
-    if (!txt.trim().startsWith("<svg")) {
-      setStatus("⚠️ Upload logo: merci d’envoyer un SVG.");
-      return;
-    }
-    setLogoSvg(txt);
+    if (file.type !== "image/png") return setStatus("⚠️ Le logo du club doit être un fichier PNG.");
+    const dimensions = await new Promise<{width:number;height:number}>((resolve, reject) => {
+      const image = new Image(); const url = URL.createObjectURL(file);
+      image.onload = () => { resolve({width:image.naturalWidth,height:image.naturalHeight}); URL.revokeObjectURL(url); };
+      image.onerror = () => { reject(new Error("Image illisible")); URL.revokeObjectURL(url); };
+      image.src = url;
+    }).catch(() => null);
+    if (!dimensions || dimensions.width !== dimensions.height) return setStatus("⚠️ Le logo PNG doit être carré.");
+    if (logoPreview) URL.revokeObjectURL(logoPreview);
+    setLogoFile(file); setLogoPreview(URL.createObjectURL(file)); setLogoSvg(""); setStatus("");
   }
 
   async function addTeam() {
@@ -301,14 +310,23 @@ export default function TeamsPage() {
 
     const finalLogo = logoSvg || genLogoSvg(n, selectedColors);
     const finalJersey = genJerseySvg(jerseyStyle, selectedColors);
+    let logoUrl: string | null = null;
+    if (logoFile) {
+      const path = `teams/${tournamentId}/${crypto.randomUUID()}.png`;
+      const { error: uploadError } = await supabase.storage.from("partners").upload(path, logoFile, { contentType: "image/png" });
+      if (uploadError) { setBusy(false); return setStatus("Erreur logo: " + uploadError.message); }
+      logoUrl = supabase.storage.from("partners").getPublicUrl(path).data.publicUrl;
+    }
 
     const payload: any = {
       tournament_id: tournamentId,
       name: n,
       email: e || null,
       challenge_name: clean(challengeName) || n,
+      club_name: clean(clubName) || n,
       colors: selectedColors.slice(0, 3),
       logo_svg: finalLogo,
+      logo_url: logoUrl,
       jersey_style: jerseyStyle,
       jersey_svg: finalJersey,
     };
@@ -329,9 +347,12 @@ export default function TeamsPage() {
     setName("");
     setEmail("");
     setChallengeName("");
+    setClubName("");
     setSelectedColors([]);
     setJerseyStyle(1);
     setLogoSvg("");
+    if (logoPreview) URL.revokeObjectURL(logoPreview);
+    setLogoFile(null); setLogoPreview("");
 
     await refreshTeams(tournamentId);
     setBusy(false);
@@ -510,6 +531,13 @@ export default function TeamsPage() {
 
               <input
                 className="border rounded-lg px-3 py-2 w-full"
+                placeholder="Nom du club (pour la fiche d’équipe)"
+                value={clubName}
+                onChange={(e) => setClubName(e.target.value)}
+              />
+
+              <input
+                className="border rounded-lg px-3 py-2 w-full"
                 placeholder="Email (optionnel)"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -593,10 +621,10 @@ export default function TeamsPage() {
                   </button>
 
                   <label className="bg-gray-200 px-3 py-2 rounded-lg hover:bg-gray-300 transition text-sm cursor-pointer">
-                    ⬆️ Upload SVG
+                    ⬆️ Logo club PNG carré
                     <input
                       type="file"
-                      accept=".svg,image/svg+xml"
+                      accept="image/png"
                       className="hidden"
                       onChange={(e) => {
                         const f = e.target.files?.[0];
@@ -616,7 +644,7 @@ export default function TeamsPage() {
                 </div>
 
                 <div className="text-xs text-gray-500 mt-2">
-                  Si aucun logo, un logo standard est généré automatiquement avec les couleurs.
+                  PNG carré uniquement (800 × 800 px conseillé, fond transparent). Sans fichier, un logo standard est généré.
                 </div>
               </div>
 
@@ -639,10 +667,10 @@ export default function TeamsPage() {
               <div className="text-sm font-semibold">Aperçu</div>
 
               <div className="flex items-center gap-3">
-                <div
+                {logoPreview ? <img src={logoPreview} alt="Aperçu du logo du club" className="w-20 h-20 rounded-xl object-contain bg-white border"/> : <div
                   className="w-20 h-20 rounded-xl overflow-hidden bg-white border flex items-center justify-center"
                   dangerouslySetInnerHTML={{ __html: previewLogo }}
-                />
+                />}
                 <div>
                   <div className="font-bold text-lg">{clean(name) || "Nom d’équipe"}</div>
                   <div className="text-sm text-gray-600">
@@ -693,12 +721,12 @@ export default function TeamsPage() {
                         className="border rounded-lg px-3 py-2 flex items-center justify-between gap-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <div
+                          {t.logo_url ? <img src={t.logo_url} alt={`Logo ${t.club_name||t.name||"club"}`} className="w-10 h-10 rounded-lg object-contain bg-white border shrink-0"/> : <div
                             className="w-10 h-10 rounded-lg overflow-hidden bg-white border flex items-center justify-center shrink-0"
                             dangerouslySetInnerHTML={{
                               __html: t.logo_svg || genLogoSvg(t.name ?? "Équipe", t.colors ?? []),
                             }}
-                          />
+                          />}
                           <div className="min-w-0">
                             <div className="font-semibold break-words leading-tight">
                               {idx + 1}. {t.name ?? "Équipe"}
