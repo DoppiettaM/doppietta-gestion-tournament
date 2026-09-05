@@ -8,6 +8,8 @@ type Pause = { from: string; to: string };
 type TournamentPause = Pause & { type?: string; exceptFields?: number[] };
 type Tournament = { id: string; title: string; display_label: string | null; start_time: string; end_time: string; match_duration_min: number; rotation_duration_min: number; num_fields: number; field_names: string[]; pauses: TournamentPause[] | null; field_pauses: Record<string, Pause[]> | null };
 type Match = { id: string; tournament_id: string; start_time: string; field_idx: number; home_team_id: string | null; away_team_id: string | null; home_source_label: string | null; away_source_label: string | null; home: { name: string } | null; away: { name: string } | null; referee_label: string | null };
+type Team = { id: string; name: string };
+type SchedulingRules = { max_match_count_gap?: number; min_rest_slots?: number; prevent_simultaneous?: boolean; rest_policy?: string };
 const hhmm = (value: string) => String(value ?? "").slice(0, 5);
 const minutes = (value: string) => { const [h, m] = hhmm(value).split(":").map(Number); return h * 60 + m; };
 const asTime = (value: number) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
@@ -28,16 +30,17 @@ function isTournamentPaused(tournament: Tournament | undefined, fieldIdx: number
 
 export default function SharedChallengeSchedulePage() {
   const router = useRouter(); const challengeId = String(useParams().id);
-  const [title, setTitle] = useState("Challenge"); const [shared, setShared] = useState(false); const [challengeFields, setChallengeFields] = useState<string[]>([]); const [referees, setReferees] = useState<string[]>([]); const [tournaments, setTournaments] = useState<Tournament[]>([]); const [matches, setMatches] = useState<Match[]>([]); const [status, setStatus] = useState("Chargement...");
+  const [title, setTitle] = useState("Challenge"); const [shared, setShared] = useState(false); const [challengeFields, setChallengeFields] = useState<string[]>([]); const [referees, setReferees] = useState<string[]>([]); const [rules, setRules] = useState<SchedulingRules>({max_match_count_gap:1,min_rest_slots:1,prevent_simultaneous:true,rest_policy:"prefer_then_relax"}); const [tournaments, setTournaments] = useState<Tournament[]>([]); const [teams, setTeams] = useState<Team[]>([]); const [matches, setMatches] = useState<Match[]>([]); const [status, setStatus] = useState("Chargement...");
   async function refresh() {
-    const { data: c, error: ce } = await supabase.from("challenges").select("title,shared_resources,field_names,referee_names").eq("id", challengeId).single(); if (ce) return setStatus("Erreur: " + ce.message);
+    const { data: c, error: ce } = await supabase.from("challenges").select("title,shared_resources,field_names,referee_names,scheduling_rules").eq("id", challengeId).single(); if (ce) return setStatus("Erreur: " + ce.message);
     const { data: links, error: le } = await supabase.from("challenge_tournaments").select("tournament_id").eq("challenge_id", challengeId); if (le) return setStatus("Erreur: " + le.message);
     const ids = (links ?? []).map(link => link.tournament_id); if (!ids.length) return setStatus("Aucun tournoi associé.");
-    const [{ data: ts, error: te }, { data: ms, error: me }] = await Promise.all([
+    const [{ data: ts, error: te }, { data: teamRows, error: teamError }, { data: ms, error: me }] = await Promise.all([
       supabase.from("tournaments").select("id,title,display_label,start_time,end_time,match_duration_min,rotation_duration_min,num_fields,field_names,pauses,field_pauses").in("id", ids),
+      supabase.from("teams").select("id,name").in("tournament_id", ids),
       supabase.from("matches").select("id,tournament_id,start_time,field_idx,home_team_id,away_team_id,home_source_label,away_source_label,referee_label,home:home_team_id(name),away:away_team_id(name)").in("tournament_id", ids).order("start_time").order("field_idx")
-    ]); if (te || me) return setStatus("Erreur: " + (te?.message ?? me?.message));
-    setTitle(c.title); setShared(c.shared_resources); setChallengeFields(Array.isArray(c.field_names)?c.field_names:[]); setReferees(Array.isArray(c.referee_names)&&c.referee_names.length?c.referee_names:Array.from({length:12},(_,i)=>`Arbitre ${i+1}`)); setTournaments((ts ?? []) as Tournament[]); setMatches((ms ?? []) as unknown as Match[]); setStatus("");
+    ]); if (te || teamError || me) return setStatus("Erreur: " + (te?.message ?? teamError?.message ?? me?.message));
+    setTitle(c.title); setShared(c.shared_resources); setChallengeFields(Array.isArray(c.field_names)?c.field_names:[]); setReferees(Array.isArray(c.referee_names)&&c.referee_names.length?c.referee_names:Array.from({length:12},(_,i)=>`Arbitre ${i+1}`)); setRules(c.scheduling_rules&&typeof c.scheduling_rules==="object"?c.scheduling_rules:{max_match_count_gap:1,min_rest_slots:1,prevent_simultaneous:true,rest_policy:"prefer_then_relax"}); setTournaments((ts ?? []) as Tournament[]); setTeams((teamRows??[]) as Team[]); setMatches((ms ?? []) as unknown as Match[]); setStatus("");
   }
   useEffect(() => { supabase.auth.getUser().then(({ data }) => data.user ? refresh() : router.push("/login")); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [challengeId, router]);
   const tournamentMap = useMemo(() => new Map(tournaments.map(t => [t.id, t])), [tournaments]);
@@ -57,14 +60,41 @@ export default function SharedChallengeSchedulePage() {
     const start = Math.min(...tournaments.map(t => minutes(t.start_time))); const end = Math.max(...tournaments.map(t => minutes(t.end_time))); const slot = Math.max(...tournaments.map(t => t.match_duration_min + t.rotation_duration_min)); const fields = challengeFields.length || Math.max(...tournaments.map(t => t.num_fields));
     const slots: Array<{ start_time: string; field_idx: number }> = []; for (let time = start; time + slot <= end; time += slot) for (let field = 1; field <= fields; field++) slots.push({ start_time: asTime(time), field_idx: field });
     if (matches.length > slots.length) return setStatus(`Planning impossible: ${matches.length} matchs pour ${slots.length} créneaux communs.`);
-    const ordered = [...matches].sort((a, b) => minutes(a.start_time) - minutes(b.start_time)); const lastRound = new Map<string, number>(); const used = new Set<number>(); const placed: Array<{ match: Match; slot: number }> = [];
-    for (const match of ordered) { const tournament=tournamentMap.get(match.tournament_id); let index = slots.findIndex((slot, candidate) => !used.has(candidate) && !isTournamentPaused(tournament,slot.field_idx,slot.start_time) && [match.home_team_id, match.away_team_id].filter(Boolean).every(id => Math.floor(candidate / fields) - (lastRound.get(id as string) ?? -99) >= 1)); if (index < 0) index = slots.findIndex((slot, candidate) => !used.has(candidate) && !isTournamentPaused(tournament,slot.field_idx,slot.start_time)); if (index < 0) return setStatus(`Aucun créneau disponible pour ${tournament?.display_label ?? tournament?.title ?? "un tournoi"} en respectant ses pauses.`); used.add(index); placed.push({ match, slot: index }); const round = Math.floor(index / fields); if (match.home_team_id) lastRound.set(match.home_team_id, round); if (match.away_team_id) lastRound.set(match.away_team_id, round); }
+    const ordered = [...matches].sort((a, b) => minutes(a.start_time) - minutes(b.start_time));
+    const teamIds = teams.map(team=>team.id); const maxGap = 1; const minRest = Math.max(1,Number(rules.min_rest_slots??1));
+    function buildPlan(allowConsecutive:boolean) {
+      const remaining=[...ordered]; const counts=new Map(teamIds.map(id=>[id,0])); const lastRound=new Map<string,number>(); const placed:Array<{match:Match;slot:number}>=[];
+      for(let round=0;round<Math.ceil(slots.length/fields)&&remaining.length;round++){
+        const busy=new Set<string>();
+        for(let fieldOffset=0;fieldOffset<fields&&remaining.length;fieldOffset++){
+          const slotIndex=round*fields+fieldOffset; const slotRow=slots[slotIndex]; if(!slotRow)continue;
+          let best=-1; let bestScore=Number.POSITIVE_INFINITY;
+          for(let i=0;i<remaining.length;i++){
+            const match=remaining[i]; const tournament=tournamentMap.get(match.tournament_id); if(isTournamentPaused(tournament,slotRow.field_idx,slotRow.start_time))continue;
+            const participants=[match.home_team_id,match.away_team_id].filter(Boolean) as string[]; if(participants.some(id=>busy.has(id)))continue;
+            const consecutive=participants.some(id=>round-(lastRound.get(id)??-9999)<=minRest); if(consecutive&&!allowConsecutive)continue;
+            const nextCounts=teamIds.map(id=>(counts.get(id)??0)+(participants.includes(id)?1:0)); if(nextCounts.length&&Math.max(...nextCounts)-Math.min(...nextCounts)>maxGap)continue;
+            const score=i+(consecutive?10000:0); if(score<bestScore){best=i;bestScore=score;}
+          }
+          if(best<0)continue;
+          const [match]=remaining.splice(best,1); const participants=[match.home_team_id,match.away_team_id].filter(Boolean) as string[];
+          for(const id of participants){busy.add(id);counts.set(id,(counts.get(id)??0)+1);lastRound.set(id,round);} placed.push({match,slot:slotIndex});
+        }
+      }
+      return {placed,remaining,counts};
+    }
+    let plan=buildPlan(false); let restRelaxed=false; if(plan.remaining.length){plan=buildPlan(true);restRelaxed=true;}
+    if(plan.remaining.length)return setStatus(`Répartition refusée : ${plan.remaining.length} match(s) ne peuvent pas être placés sans dépasser l’écart obligatoire d’un match entre les équipes.`);
+    const placed=plan.placed;
+    const finalCounts=Array.from(plan.counts.values()); if(finalCounts.length&&Math.max(...finalCounts)-Math.min(...finalCounts)>maxGap)return setStatus("Répartition refusée : contrôle final d’équité non conforme.");
     const names = referees.length?referees:Array.from({length:12},(_,i)=>`Arbitre ${i+1}`); if(names.length<fields)return setStatus(`Ajoutez au moins ${fields} arbitres pour couvrir les ${fields} terrains simultanément.`);
     const results = await Promise.all(placed.map(({ match, slot: index }, order) => supabase.from("matches").update({ ...slots[index], referee_team_id: null, referee_label: names[(Math.floor(index/fields)*fields+(index%fields))%names.length], schedule_order: order + 1 }).eq("id", match.id))); const error = results.find(x => x.error)?.error; if (error) return setStatus("Erreur: " + error.message); await refresh(); setStatus("Planning commun réorganisé sans collision de terrain ni d’arbitre.");
+    setStatus(restRelaxed?"Planning conforme à l’équité stricte. Quelques enchaînements ont été conservés uniquement faute de planning complet avec récupération systématique.":"Planning conforme : équité stricte, aucun match simultané et au moins un créneau de récupération pour chaque équipe.");
   }
 
   return <main className="min-h-screen bg-slate-100 p-6"><div className="max-w-7xl mx-auto space-y-4"><header className="bg-slate-950 text-white rounded-2xl p-6 flex justify-between gap-3 flex-wrap"><div><p className="text-amber-400 font-bold text-sm">RESSOURCES PARTAGÉES</p><h1 className="text-3xl font-black">Planning global · {title}</h1><p className="text-white/60">{matches.length} matchs · {conflicts.size} collision(s) de terrain · {pauseConflicts.size} match(s) sur une pause</p></div><div className="flex gap-2"><button onClick={rebalance} className="bg-amber-400 text-slate-950 px-4 py-2 rounded-xl font-bold">Répartir sans conflit</button><button onClick={() => router.push(`/dashboard/challenges/${challengeId}`)} className="bg-white/10 px-4 py-2 rounded-xl">← Challenge</button></div></header>
     {status && <div className="bg-white rounded-xl shadow p-4 text-amber-700">{status}</div>}
+    <section className="grid gap-3 md:grid-cols-3"><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><strong>Équité obligatoire</strong><span className="block text-sm text-gray-600">Écart maximal enregistré : 1 match.</span></div><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><strong>Double présence interdite</strong><span className="block text-sm text-gray-600">Contrôle sur tous les terrains du challenge.</span></div><div className="rounded-2xl border border-sky-200 bg-sky-50 p-4"><strong>Récupération prioritaire</strong><span className="block text-sm text-gray-600">{Math.max(1,Number(rules.min_rest_slots??1))} créneau(x) sans jouer entre deux matchs, si réalisable.</span></div></section>
     <section className="rounded-2xl bg-white p-5 shadow"><div className="flex items-center justify-between gap-3"><div><h2 className="font-black">Pauses synchronisées</h2><p className="text-sm text-gray-500">Chargées automatiquement depuis les réglages de chaque tournoi et bloquées pendant la répartition.</p></div><strong className="rounded-full bg-amber-100 px-3 py-1 text-amber-800">{synchronizedPauses.length}</strong></div>{synchronizedPauses.length>0?<div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{synchronizedPauses.map(pause=><div key={pause.key} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><strong>{pause.from} → {pause.to} · {pause.label}</strong><span className="block text-gray-600">{pause.detail}</span></div>)}</div>:<p className="mt-3 text-sm text-gray-500">Aucune pause renseignée dans les tournois du challenge.</p>}</section>
     <section className="grid lg:grid-cols-4 gap-4"><div className="lg:col-span-3 bg-white rounded-2xl shadow p-6 space-y-2">{matches.map(match => { const key = `${hhmm(match.start_time)}|${match.field_idx}`; const tournament = tournamentMap.get(match.tournament_id); const fieldName = challengeFields[match.field_idx - 1] ?? tournament?.field_names?.[match.field_idx - 1] ?? `Terrain ${match.field_idx}`; const onPause=pauseConflicts.has(match.id); return <div key={match.id} className={`border rounded-xl p-3 grid md:grid-cols-4 gap-2 ${conflicts.has(key)||onPause ? "border-red-400 bg-red-50" : ""}`}><strong>{hhmm(match.start_time)} · {fieldName}{onPause&&<small className="block text-red-700">⚠ Pause du tournoi</small>}</strong><span className="text-xs font-bold text-gray-500">{tournament?.display_label ?? tournament?.title}</span><span>{match.home?.name ?? match.home_source_label ?? "À déterminer"} — {match.away?.name ?? match.away_source_label ?? "À déterminer"}</span><span className="text-sm text-gray-500">Arbitre: {match.referee_label ?? "à attribuer"}</span></div>; })}</div><aside className="bg-white rounded-2xl shadow p-5"><h2 className="font-black">Équité des matchs</h2>{teamCounts.map(team => <div key={team.name} className="flex justify-between border-b py-2 text-sm"><span>{team.name}</span><strong>{team.count}</strong></div>)}</aside></section>
   </div></main>;
