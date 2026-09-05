@@ -4,3 +4,5 @@ alter table public.challenges
 update public.challenges
 set scheduling_rules = '{"max_match_count_gap":1,"min_rest_slots":1,"prevent_simultaneous":true,"rest_policy":"prefer_then_relax"}'::jsonb
 where scheduling_rules is null;
+
+-- Rules are enforced by the shared challenge scheduling engine.
