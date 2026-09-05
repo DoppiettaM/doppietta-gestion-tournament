@@ -1,5 +1,5 @@
-import { ChallengePublicScreen } from "../page";
+import ChallengePublicScreen from "../page";
 
 export default function ChallengeMobileScreenPage(){
-  return <ChallengePublicScreen mobile/>;
+  return <ChallengePublicScreen/>;
 }
