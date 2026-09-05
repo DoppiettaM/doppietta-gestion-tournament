@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { computeChallengeStandings, rankTournamentTeams, TeamStats, TieBreaker } from "@/lib/challenge";
 import { rankMichelFinal } from "@/lib/tournamentPhases";
@@ -27,8 +27,8 @@ const hhmm=(s:string)=>s?.slice(0,5)||"--:--";
 const mins=(s:string)=>{const [h,m]=hhmm(s).split(":").map(Number);return h*60+m};
 const nameOf=(id:string|null,label:string|null,teams:Team[])=>teams.find(t=>t.id===id)?.name||label||"À déterminer";
 
-export function ChallengePublicScreen({mobile=false}:{mobile?:boolean}){
-  const id=String(useParams().id); const [challenge,setChallenge]=useState<Challenge|null>(null); const [links,setLinks]=useState<Link[]>([]); const [teams,setTeams]=useState<Team[]>([]); const [matches,setMatches]=useState<Match[]>([]); const [events,setEvents]=useState<EventRow[]>([]); const [view,setView]=useState<View>("schedule"); const [selectedTournament,setSelectedTournament]=useState<string|null>(null); const [fullscreen,setFullscreen]=useState(false); const [status,setStatus]=useState("Chargement de l’affichage…");
+export default function ChallengePublicScreen(){
+  const id=String(useParams().id); const mobile=usePathname().endsWith("/mobile"); const [challenge,setChallenge]=useState<Challenge|null>(null); const [links,setLinks]=useState<Link[]>([]); const [teams,setTeams]=useState<Team[]>([]); const [matches,setMatches]=useState<Match[]>([]); const [events,setEvents]=useState<EventRow[]>([]); const [view,setView]=useState<View>("schedule"); const [selectedTournament,setSelectedTournament]=useState<string|null>(null); const [fullscreen,setFullscreen]=useState(false); const [status,setStatus]=useState("Chargement de l’affichage…");
   async function load(){
     const {data:c,error}=await supabase.from("challenges").select("id,title,event_date,venue,field_names,match_duration_min,display_theme,display_logo_url,display_banners,scoring_mode,default_points_by_rank,tie_breakers,publish_standings").eq("id",id).maybeSingle();
     if(error)return setStatus("L’affichage public est temporairement indisponible. Actualisez la page dans quelques instants.");
@@ -51,8 +51,6 @@ export function ChallengePublicScreen({mobile=false}:{mobile?:boolean}){
     <div className="transition-all duration-500">{view==="schedule"&&<Schedule matches={matches} events={events} teams={teams} links={links} fields={challenge.field_names} duration={challenge.match_duration_min} eventDate={challenge.event_date} p={p} compact={compactDisplay}/>} {view==="selectors"&&<Selectors links={publishedLinks} challengePublished={challenge.publish_standings} p={p} mobile={mobile} tournament={x=>{setSelectedTournament(x);setView("tournament")}} challenge={()=>setView("challenge")}/>} {view==="tournament"&&selected&&<Ranking title={selected.tournament?.display_label||selected.tournament?.title||"Tournoi"} subtitle={selected.tournament?.title||"Classement du tournoi"} rows={ranked.filter(r=>r.tournamentId===selectedTournament).map(r=>({name:r.name,played:r.played,points:r.points,gf:r.goalsFor,gd:r.goalDifference}))} p={p} mobile={mobile} back={()=>setView("selectors")}/>} {view==="challenge"&&challenge.publish_standings&&<Ranking title="Challenge 🏆" subtitle="Classement général en direct" rows={challengeRanks.map(r=>({name:r.name,played:r.tournamentsPlayed,points:r.score,gf:r.goalsFor,gd:r.goalDifference}))} p={p} mobile={mobile} back={()=>setView("selectors")}/>}</div>
   </div></main>
 }
-
-export default function ChallengePublicScreenPage(){return <ChallengePublicScreen/>}
 
 function Banners({values,panel,compact=false,mobile=false}:{values:string[];panel:string;compact?:boolean;mobile?:boolean}){const slots=[values?.[0],values?.[1],values?.[2]];if(!slots.some(Boolean))return null;return <section className={`${compact?"mb-2 gap-2 lg:gap-3":"mb-4 gap-2 sm:gap-4 lg:gap-8"} grid grid-cols-2 items-center ${mobile?"":"lg:grid-cols-[1fr_1.5fr_1fr]"}`}>{slots.map((v,i)=><div key={i} className={`${mobile?(i===1?"order-first col-span-2 h-20":"h-14"):compact?(i===1?"order-first col-span-2 h-14 lg:order-none lg:col-span-1":"h-12 lg:h-14"):(i===1?"order-first col-span-2 h-[clamp(90px,14vw,230px)] lg:order-none lg:col-span-1":"h-[clamp(72px,9vw,150px)]")} overflow-hidden rounded-xl border border-white/10 shadow-2xl`} style={{background:panel}}>{v?<img src={v} alt={`Bannière ${i+1}`} className="h-full w-full object-cover"/>:<div className="h-full bg-white/5"/>}</div>)}</section>}
 function Nav({active,label,icon,onClick,p,compact=false}:{active:boolean;label:string;icon:string;onClick:()=>void;p:Palette;compact?:boolean}){return <button onClick={onClick} className={`${compact?"min-h-8 px-3 py-1 text-[9px]":"min-h-11 px-3 py-2 text-[11px] sm:px-5 sm:text-sm"} rounded-full border font-black uppercase tracking-wide shadow-xl transition duration-300 hover:-translate-y-0.5 focus:ring-2 focus:ring-white`} style={{background:active?"#fff":p.panel,color:active?p.bg:p.text,borderColor:active?"#fff":`${p.accent}55`}}>{icon} {label}</button>}
