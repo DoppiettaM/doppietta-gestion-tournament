@@ -703,16 +703,9 @@ for (const slot of allSlots) {
   if (!busyAtTime.has(timeKey)) busyAtTime.set(timeKey, new Set());
   const busySet = busyAtTime.get(timeKey)!;
 
-  const passes: Array<{ strictRest: boolean }> = [
-    { strictRest: true },
-    { strictRest: false },
-  ];
-
   let chosenIndex = -1;
-
-  for (const pass of passes) {
-    let bestIndex = -1;
-    let bestScore = Number.POSITIVE_INFINITY;
+  let bestIndex = -1;
+  let bestScore = Number.POSITIVE_INFINITY;
 
     const window = 180;
     const endPtr = Math.min(sequence.length, ptr + window);
@@ -725,10 +718,8 @@ for (const slot of allSlots) {
 
       if (busySet.has(a) || busySet.has(b)) continue;
 
-      // Anti-enchaînement strict
-      if (pass.strictRest) {
-        if (!restOkStrict(a, slot.timeIndex) || !restOkStrict(b, slot.timeIndex)) continue;
-      }
+      // Anti-enchaînement immuable : un créneau entier sans jouer.
+      if (!restOkStrict(a, slot.timeIndex) || !restOkStrict(b, slot.timeIndex)) continue;
 
       // Équité globale stricte: max-min <= 1
       const gg = minMaxGlobalAfter(a, b);
@@ -744,20 +735,11 @@ for (const slot of allSlots) {
 
       const orderPenalty = (i - ptr) * 1.2;
 
-      let relaxPenalty = 0;
-      if (!pass.strictRest) {
-        const la = lastTimeIndex.get(a) ?? -9999;
-        const lb = lastTimeIndex.get(b) ?? -9999;
-        const consA = slot.timeIndex - la < 2;
-        const consB = slot.timeIndex - lb < 2;
-        if (consA || consB) relaxPenalty = 80;
-      }
-
       const ca = playedCount.get(a) ?? 0;
       const cb = playedCount.get(b) ?? 0;
       const lowPlayedBonus = (ca + cb) * 0.5;
 
-      const score = fieldPenalty + orderPenalty + relaxPenalty + lowPlayedBonus;
+      const score = fieldPenalty + orderPenalty + lowPlayedBonus;
 
       if (score < bestScore) {
         bestScore = score;
@@ -765,11 +747,7 @@ for (const slot of allSlots) {
       }
     }
 
-    if (bestIndex !== -1) {
-      chosenIndex = bestIndex;
-      break;
-    }
-  }
+  chosenIndex = bestIndex;
 
   if (chosenIndex === -1) continue;
 
@@ -814,29 +792,7 @@ for (const slot of allSlots) {
   ptr++;
 }
 
-// Une contrainte d'équité stricte peut ponctuellement bloquer la recherche
-// heuristique. On termine alors la ronde sans abandonner de rencontre, tout en
-// conservant l'interdiction absolue de faire jouer deux fois une équipe au
-// même horaire.
-if (ptr < sequence.length) {
-  for (const slot of allSlots) {
-    if (ptr >= sequence.length) break;
-    if (scheduled.some(m => m.start_time === slot.start && m.field_idx === slot.fieldIdx)) continue;
-    const busy = new Set(scheduled.filter(m => m.start_time === slot.start).flatMap(m => [m.home_team_id, m.away_team_id]));
-    let candidateIndex = -1;
-    for (let i = ptr; i < sequence.length; i++) {
-      if (!busy.has(sequence[i].a) && !busy.has(sequence[i].b)) { candidateIndex = i; break; }
-    }
-    if (candidateIndex < 0) continue;
-    [sequence[ptr], sequence[candidateIndex]] = [sequence[candidateIndex], sequence[ptr]];
-    const chosen = sequence[ptr];
-    const gChosen = clampInt(Number(chosen.groupIdx ?? 1), 1, groupCount);
-    const refereeId = chooseRestedReferee(teams.map(team => team.id), new Set([chosen.a, chosen.b]), lastActivityIndex, slot.timeIndex, Number(t.referee_rest_slots ?? 1));
-    scheduled.push({ tournament_id: tournamentId, home_team_id: chosen.a, away_team_id: chosen.b, field_idx: slot.fieldIdx, start_time: slot.start, referee_team_id: refereeId, match_number: scheduled.length + 1, stage: showGroups ? "group" : "league", round_label: showGroups ? (groupNames[gChosen - 1] ?? `Poule ${gChosen}`) : "Journée", schedule_order: scheduled.length + 1 });
-    lastActivityIndex.set(chosen.a, slot.timeIndex); lastActivityIndex.set(chosen.b, slot.timeIndex); if (refereeId) lastActivityIndex.set(refereeId, slot.timeIndex);
-    ptr++;
-  }
-}
+if (ptr < sequence.length) return setStatus(`Planning impossible sans enfreindre le repos obligatoire : ${sequence.length-ptr} match(s) restent à placer. Ajoutez des créneaux horaires ; aucun enchaînement ne sera créé.`);
 
     // Insert par chunk
     const chunkSize = 200;
