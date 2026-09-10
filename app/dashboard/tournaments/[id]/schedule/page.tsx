@@ -743,9 +743,9 @@ type PlannedMatch = {
         threeTeamGroups.forEach((group, groupIndex) => {
           const [a, b, c] = group.ranks!;
           specs.push(
-            { number: groupIndex === 0 ? 48 : 51, stage: "phase_2_group", label: group.label ?? "Phase 2 · Poule", home: rankLabel(a), away: rankLabel(b), destination: group.id, wave: 1 },
-            { number: groupIndex === 0 ? 49 : 52, stage: "phase_2_group", label: group.label ?? "Phase 2 · Poule", home: rankLabel(c), away: rankLabel(a), destination: group.id, wave: 2 },
-            { number: groupIndex === 0 ? 50 : 53, stage: "phase_2_group", label: group.label ?? "Phase 2 · Poule", home: rankLabel(b), away: rankLabel(c), destination: group.id, wave: 4 },
+            { number: groupIndex === 0 ? 48 : 51, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(a), away: rankLabel(b), destination: group.id, wave: 1 },
+            { number: groupIndex === 0 ? 49 : 52, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(c), away: rankLabel(a), destination: group.id, wave: 2 },
+            { number: groupIndex === 0 ? 50 : 53, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(b), away: rankLabel(c), destination: group.id, wave: 4 },
           );
         });
         specs.push(
