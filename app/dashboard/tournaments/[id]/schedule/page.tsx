@@ -759,7 +759,7 @@ type PlannedMatch = {
           const slotsAtTime = timeGroups[phaseStart + spec.wave];
           const sameWave = specs.slice(0, index).filter(row => row.wave === spec.wave).length;
           const slot = slotsAtTime?.[sameWave];
-          return slot ? { tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: slot.fieldIdx, start_time: slot.start, match_number: spec.number, stage: spec.stage, phase_key: "phase2", round_label: spec.label, home_source_label: spec.home, away_source_label: spec.away, destination_key: spec.destination, schedule_order: scheduled.length + index + 1 } : null;
+          return slot ? { tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: slot.fieldIdx, start_time: slot.start, match_number: spec.number, stage: spec.stage, phase_key: "phase_2", round_label: spec.label, home_source_label: spec.home, away_source_label: spec.away, destination_key: spec.destination, schedule_order: scheduled.length + index + 1 } : null;
         });
         if (phaseRows.some(row => !row)) return setStatus("Phase 1 conservée, mais les horaires ne permettent pas de placer toute la phase 2 avec 10 minutes de transition.");
         const { error } = await supabase.from("matches").insert(phaseRows.filter(Boolean));
