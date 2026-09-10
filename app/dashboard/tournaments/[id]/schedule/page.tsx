@@ -539,6 +539,7 @@ export default function SchedulePage() {
 
   async function generateMatches() {
     if (!t) return;
+    const tournament=t;
 
     setEditMode(false);
     setSelectedCell(null);
@@ -611,10 +612,6 @@ export default function SchedulePage() {
       return;
     }
 
-    // On supprime les matchs existants
-    const { error: delErr } = await supabase.from("matches").delete().eq("tournament_id", tournamentId);
-    if (delErr) return setStatus("Erreur delete matches: " + delErr.message);
-
     // Créneaux jouables: on remplit “tous terrains à chaque temps” sauf pauses
     const allSlots: Array<{ start: string; fieldIdx: number; timeIndex: number }> = [];
     const fieldCount = t.num_fields ?? 1;
@@ -626,32 +623,7 @@ export default function SchedulePage() {
       }
     }
 
-// Placement “contraintes” (anti-enchaînement + équité stricte)
-const lastTimeIndex = new Map<string, number>();
-const lastActivityIndex = new Map<string, number>();
-const busyAtTime = new Map<string, Set<string>>();
-const fieldUsage = new Map<number, number>(); // équilibrage terrain
-
-// ✅ Comptage matchs joués (global + par poule)
-const playedCount = new Map<string, number>();
-const playedCountByGroup = new Map<number, Map<string, number>>();
-const consecutiveUses = new Map<string, number>();
-
-for (const tm of teams) {
-  const g = clampInt(Number(tm.group_idx ?? 1), 1, groupCount);
-
-  playedCount.set(tm.id, 0);
-  consecutiveUses.set(tm.id, 0);
-  lastTimeIndex.set(tm.id, -9999);
-  lastActivityIndex.set(tm.id, -9999);
-
-  if (!playedCountByGroup.has(g)) playedCountByGroup.set(g, new Map());
-  playedCountByGroup.get(g)!.set(tm.id, 0);
-}
-
-for (let f = 1; f <= fieldCount; f++) fieldUsage.set(f, 0);
-
-const scheduled: Array<{
+type PlannedMatch = {
   tournament_id: string;
   home_team_id: string;
   away_team_id: string;
@@ -662,144 +634,53 @@ const scheduled: Array<{
   stage: string;
   round_label: string;
   schedule_order: number;
-}> = [];
+};
 
-function minMaxGlobalAfter(a: string, b: string) {
-  const values = Array.from(playedCount.values());
-  const minV = values.length ? Math.min(...values) : 0;
-  let maxV = values.length ? Math.max(...values) : 0;
-
-  const ca = playedCount.get(a) ?? 0;
-  const cb = playedCount.get(b) ?? 0;
-
-  maxV = Math.max(maxV, ca + 1, cb + 1);
-  return { minV, maxV };
-}
-
-function minMaxGroupAfter(groupIdx: number, a: string, b: string) {
-  const m = playedCountByGroup.get(groupIdx);
-  if (!m) return { minV: 0, maxV: 0 };
-
-  const values = Array.from(m.values());
-  const minV = values.length ? Math.min(...values) : 0;
-  let maxV = values.length ? Math.max(...values) : 0;
-
-  const ca = m.get(a) ?? 0;
-  const cb = m.get(b) ?? 0;
-
-  maxV = Math.max(maxV, ca + 1, cb + 1);
-  return { minV, maxV };
-}
-
-function restOkStrict(teamId: string, timeIndex: number) {
-  const last = lastTimeIndex.get(teamId) ?? -9999;
-  return timeIndex - last >= 2;
-}
-
-let ptr = 0;
-
-for (const slot of allSlots) {
-  if (ptr >= sequence.length) break;
-
-  const timeKey = slot.start;
-  if (!busyAtTime.has(timeKey)) busyAtTime.set(timeKey, new Set());
-  const busySet = busyAtTime.get(timeKey)!;
-
-  let chosenIndex = -1;
-  for (const allowConsecutive of [false, true]) {
-    let bestIndex = -1;
-    let bestScore = Number.POSITIVE_INFINITY;
-    const window = 180;
-    const endPtr = Math.min(sequence.length, ptr + window);
-
-    for (let i = ptr; i < endPtr; i++) {
-      const cand = sequence[i];
-      const a = cand.a;
-      const b = cand.b;
-      const g = clampInt(Number(cand.groupIdx ?? 1), 1, groupCount);
-
-      if (busySet.has(a) || busySet.has(b)) continue;
-
-      const consecutiveA = !restOkStrict(a, slot.timeIndex);
-      const consecutiveB = !restOkStrict(b, slot.timeIndex);
-      if ((consecutiveA || consecutiveB) && !allowConsecutive) continue;
-      if (consecutiveA && (consecutiveUses.get(a) ?? 0) >= 1) continue;
-      if (consecutiveB && (consecutiveUses.get(b) ?? 0) >= 1) continue;
-
-      // Équité globale stricte: max-min <= 1
-      const gg = minMaxGlobalAfter(a, b);
-      if (gg.maxV - gg.minV > 1) continue;
-
-      // Équité poule stricte: max-min <= 1
-      const mg = minMaxGroupAfter(g, a, b);
-      if (mg.maxV - mg.minV > 1) continue;
-
-      // Score heuristique
-      const usage = fieldUsage.get(slot.fieldIdx) ?? 0;
-      const fieldPenalty = usage * 2;
-
-      const orderPenalty = (i - ptr) * 1.2;
-
-      const ca = playedCount.get(a) ?? 0;
-      const cb = playedCount.get(b) ?? 0;
-      const lowPlayedBonus = (ca + cb) * 0.5;
-
-      const score = fieldPenalty + orderPenalty + lowPlayedBonus + (consecutiveA || consecutiveB ? 10000 : 0);
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestIndex = i;
+    const timeGroups=Array.from(new Set(allSlots.map(slot=>slot.start))).map(start=>allSlots.filter(slot=>slot.start===start));
+    const baseSequence=sequence.map((pair,priority)=>({...pair,priority}));
+    function tryPlan(allowException:boolean,attempt:number){
+      const remaining=[...baseSequence]; const playedCount=new Map(teams.map(team=>[team.id,0])); const consecutiveUses=new Map(teams.map(team=>[team.id,0])); const lastTimeIndex=new Map(teams.map(team=>[team.id,-9999])); const lastActivityIndex=new Map(teams.map(team=>[team.id,-9999])); const scheduled:PlannedMatch[]=[];
+      for(const slotsAtTime of timeGroups){
+        const busy=new Set<string>(); const timeIndex=slotsAtTime[0]?.timeIndex??0;
+        for(const slot of slotsAtTime){
+          const candidates=remaining.map((pair,index)=>({pair,index})).filter(({pair})=>!busy.has(pair.a)&&!busy.has(pair.b)).map(item=>{
+            const consecutiveA=timeIndex-(lastTimeIndex.get(item.pair.a)??-9999)<2,consecutiveB=timeIndex-(lastTimeIndex.get(item.pair.b)??-9999)<2;
+            return{...item,consecutiveA,consecutiveB};
+          }).filter(item=>{
+            if((item.consecutiveA||item.consecutiveB)&&!allowException)return false;
+            if(item.consecutiveA&&(consecutiveUses.get(item.pair.a)??0)>=1)return false;
+            if(item.consecutiveB&&(consecutiveUses.get(item.pair.b)??0)>=1)return false;
+            const values=teams.map(team=>(playedCount.get(team.id)??0)+(team.id===item.pair.a||team.id===item.pair.b?1:0));
+            return !values.length||Math.max(...values)-Math.min(...values)<=1;
+          }).sort((left,right)=>{
+            const leftPenalty=(left.consecutiveA||left.consecutiveB?100000:0)+((playedCount.get(left.pair.a)??0)+(playedCount.get(left.pair.b)??0))*100+left.pair.priority;
+            const rightPenalty=(right.consecutiveA||right.consecutiveB?100000:0)+((playedCount.get(right.pair.a)??0)+(playedCount.get(right.pair.b)??0))*100+right.pair.priority;
+            const jitter=(value:number)=>((value*9301+attempt*49297+233280)%233280)/233280;
+            return leftPenalty-rightPenalty+jitter(left.index)-jitter(right.index);
+          });
+          if(!candidates.length)continue;
+          const pool=Math.min(candidates.length,attempt===0?1:4),chosen=candidates[(attempt+timeIndex+slot.fieldIdx)%pool];
+          remaining.splice(chosen.index,1); busy.add(chosen.pair.a); busy.add(chosen.pair.b);
+          if(chosen.consecutiveA)consecutiveUses.set(chosen.pair.a,(consecutiveUses.get(chosen.pair.a)??0)+1);
+          if(chosen.consecutiveB)consecutiveUses.set(chosen.pair.b,(consecutiveUses.get(chosen.pair.b)??0)+1);
+          const refereeId=chooseRestedReferee(teams.map(team=>team.id),new Set([chosen.pair.a,chosen.pair.b]),lastActivityIndex,timeIndex,Number(tournament.referee_rest_slots??1));
+          const group=clampInt(Number(chosen.pair.groupIdx??1),1,groupCount);
+          scheduled.push({tournament_id:tournamentId,home_team_id:chosen.pair.a,away_team_id:chosen.pair.b,field_idx:slot.fieldIdx,start_time:slot.start,referee_team_id:refereeId,match_number:scheduled.length+1,stage:tournament.format==="single_elimination"?"knockout":showGroups?"group":"league",round_label:tournament.format==="single_elimination"?(teams.length===2?"Finale":teams.length===4?"Demi-finale":teams.length===8?"Quart de finale":"Premier tour"):showGroups?(groupNames[group-1]??`Poule ${group}`):"Journée",schedule_order:scheduled.length+1});
+          for(const teamId of [chosen.pair.a,chosen.pair.b]){playedCount.set(teamId,(playedCount.get(teamId)??0)+1);lastTimeIndex.set(teamId,timeIndex);lastActivityIndex.set(teamId,timeIndex)} if(refereeId)lastActivityIndex.set(refereeId,timeIndex);
+        }
+        if(!remaining.length)break;
       }
+      return{scheduled,remaining,consecutiveUses};
     }
-    if (bestIndex !== -1) { chosenIndex = bestIndex; break; }
-  }
+    let plan=tryPlan(false,0);
+    for(let attempt=1;plan.remaining.length&&attempt<250;attempt++){const candidate=tryPlan(false,attempt);if(candidate.remaining.length<plan.remaining.length)plan=candidate;}
+    if(plan.remaining.length)for(let attempt=0;plan.remaining.length&&attempt<500;attempt++){const candidate=tryPlan(true,attempt);if(candidate.remaining.length<plan.remaining.length)plan=candidate;}
+    if(plan.remaining.length)return setStatus(`Planning impossible avec les horaires actuels : ${plan.remaining.length} match(s) restent à placer. L’ancien planning a été conservé.`);
+    const scheduled=plan.scheduled,consecutiveUses=plan.consecutiveUses;
 
-  if (chosenIndex === -1) continue;
-
-  [sequence[ptr], sequence[chosenIndex]] = [sequence[chosenIndex], sequence[ptr]];
-  const chosen = sequence[ptr];
-  const gChosen = clampInt(Number(chosen.groupIdx ?? 1), 1, groupCount);
-
-  const refereeId = chooseRestedReferee(teams.map(team => team.id), new Set([chosen.a, chosen.b]), lastActivityIndex, slot.timeIndex, Number(t.referee_rest_slots ?? 1));
-  scheduled.push({
-    tournament_id: tournamentId,
-    home_team_id: chosen.a,
-    away_team_id: chosen.b,
-    field_idx: slot.fieldIdx,
-    start_time: slot.start,
-    referee_team_id: refereeId,
-    match_number: scheduled.length + 1,
-    stage: t.format === "single_elimination" ? "knockout" : showGroups ? "group" : "league",
-    round_label: t.format === "single_elimination" ? (teams.length === 2 ? "Finale" : teams.length === 4 ? "Demi-finale" : teams.length === 8 ? "Quart de finale" : "Premier tour") : showGroups ? (groupNames[gChosen - 1] ?? `Poule ${gChosen}`) : `Journée`,
-    schedule_order: scheduled.length + 1,
-  });
-
-  busySet.add(chosen.a);
-  busySet.add(chosen.b);
-
-  if (!restOkStrict(chosen.a, slot.timeIndex)) consecutiveUses.set(chosen.a, (consecutiveUses.get(chosen.a) ?? 0) + 1);
-  if (!restOkStrict(chosen.b, slot.timeIndex)) consecutiveUses.set(chosen.b, (consecutiveUses.get(chosen.b) ?? 0) + 1);
-  lastTimeIndex.set(chosen.a, slot.timeIndex);
-  lastTimeIndex.set(chosen.b, slot.timeIndex);
-  lastActivityIndex.set(chosen.a, slot.timeIndex);
-  lastActivityIndex.set(chosen.b, slot.timeIndex);
-  if (refereeId) lastActivityIndex.set(refereeId, slot.timeIndex);
-
-  playedCount.set(chosen.a, (playedCount.get(chosen.a) ?? 0) + 1);
-  playedCount.set(chosen.b, (playedCount.get(chosen.b) ?? 0) + 1);
-
-  const mapG = playedCountByGroup.get(gChosen);
-  if (mapG) {
-    mapG.set(chosen.a, (mapG.get(chosen.a) ?? 0) + 1);
-    mapG.set(chosen.b, (mapG.get(chosen.b) ?? 0) + 1);
-  }
-
-  fieldUsage.set(slot.fieldIdx, (fieldUsage.get(slot.fieldIdx) ?? 0) + 1);
-
-  ptr++;
-}
-
-if (ptr < sequence.length) return setStatus(`Planning impossible sans dépasser l’unique exception d’enchaînement autorisée par équipe : ${sequence.length-ptr} match(s) restent à placer.`);
+    // Remplacement uniquement après calcul complet : un échec ne vide plus le tournoi.
+    const { error: delErr } = await supabase.from("matches").delete().eq("tournament_id", tournamentId);
+    if (delErr) return setStatus("Erreur delete matches: " + delErr.message);
 
     // Insert par chunk
     const chunkSize = 200;
