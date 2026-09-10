@@ -226,15 +226,36 @@ export default function SchedulePage() {
     return false;
   }
 
+  function pausedUntil(fieldIdx: number, startMin: number) {
+    const end = startMin + slotMinutes;
+    const endings: number[] = [];
+    for (const pause of pauseModel.globalPauses) if (overlaps(startMin, end, timeToMin(pause.from), timeToMin(pause.to))) endings.push(timeToMin(pause.to));
+    if (pauseModel.exceptPause && !pauseModel.exceptPause.exceptFields.includes(fieldIdx) && overlaps(startMin, end, timeToMin(pauseModel.exceptPause.from), timeToMin(pauseModel.exceptPause.to))) endings.push(timeToMin(pauseModel.exceptPause.to));
+    for (const pause of pauseModel.fieldPausesObj[String(fieldIdx)] ?? []) if (overlaps(startMin, end, timeToMin(pause.from), timeToMin(pause.to))) endings.push(timeToMin(pause.to));
+    return endings.length ? Math.max(...endings) : null;
+  }
+
   const timeline = useMemo(() => {
     if (!t) return [];
     const start = timeToMin(t.start_time || "09:00");
     const end = timeToMin(t.end_time || "18:00");
 
     const times: string[] = [];
-    for (let cur = start; cur + slotMinutes <= end; cur += slotMinutes) times.push(minToTime(cur));
+    const fieldCount = t.num_fields ?? 1;
+    for (let cur = start; cur + slotMinutes <= end;) {
+      const pauseEnds = Array.from({ length: fieldCount }, (_, index) => pausedUntil(index + 1, cur));
+      // Quand tous les terrains sont arrêtés, la grille reprend exactement à
+      // l'heure de fin de pause au lieu de conserver le décalage de l'ancienne série.
+      if (pauseEnds.every(value => value !== null)) {
+        cur = Math.max(...pauseEnds.map(value => value ?? cur));
+        continue;
+      }
+      times.push(minToTime(cur));
+      cur += slotMinutes;
+    }
     return times;
-  }, [t, slotMinutes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t, slotMinutes, pauseModel]);
 
   const timeIndexMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -744,13 +765,13 @@ type PlannedMatch = {
           const [a, b, c] = group.ranks!;
           specs.push(
             { number: groupIndex === 0 ? 48 : 51, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(a), away: rankLabel(b), destination: group.id, wave: 1 },
-            { number: groupIndex === 0 ? 49 : 52, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(c), away: rankLabel(a), destination: group.id, wave: 2 },
-            { number: groupIndex === 0 ? 50 : 53, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(b), away: rankLabel(c), destination: group.id, wave: 4 },
+            { number: groupIndex === 0 ? 49 : 52, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(c), away: rankLabel(a), destination: group.id, wave: 3 },
+            { number: groupIndex === 0 ? 50 : 53, stage: `phase_2_${group.id}`, label: group.label ?? "Phase 2 · Poule", home: rankLabel(b), away: rankLabel(c), destination: group.id, wave: 5 },
           );
         });
         specs.push(
-          { number: 54, stage: "phase_2_knockout", label: "Petite finale", home: "Perdant M46", away: "Perdant M47", destination: finalTable?.id ?? "final_table", wave: 3 },
-          { number: 55, stage: "phase_2_knockout", label: "Finale", home: "Vainqueur M46", away: "Vainqueur M47", destination: finalTable?.id ?? "final_table", wave: 3 },
+          { number: 54, stage: "phase_2_knockout", label: "Petite finale", home: "Perdant M46", away: "Perdant M47", destination: finalTable?.id ?? "final_table", wave: 2 },
+          { number: 55, stage: "phase_2_knockout", label: "Finale", home: "Vainqueur M46", away: "Vainqueur M47", destination: finalTable?.id ?? "final_table", wave: 2 },
         );
         const lastPhaseOneIndex = Math.max(...scheduled.map(match => timeIndexMap.get(match.start_time) ?? 0));
         const transitionSlots = Math.max(1, Math.ceil(10 / slotMinutes));
