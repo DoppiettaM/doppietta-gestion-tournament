@@ -106,7 +106,7 @@ function roundRobinPairs(teamIds: string[]) {
 /** Mélange alterné des poules: A1,B1,C1,A2,B2,C2,... */
 function interleaveByGroups(groups: { groupIdx: number; pairs: Array<{ a: string; b: string; round: number }> }[]) {
   const queues = groups.map((g) => ({ groupIdx: g.groupIdx, q: [...g.pairs] }));
-  const out: Array<{ a: string; b: string; groupIdx: number }> = [];
+  const out: Array<{ a: string; b: string; groupIdx: number; round: number }> = [];
 
   // ordre: poule 1..N
   queues.sort((x, y) => x.groupIdx - y.groupIdx);
@@ -117,7 +117,7 @@ function interleaveByGroups(groups: { groupIdx: number; pairs: Array<{ a: string
     for (const g of queues) {
       const item = g.q.shift();
       if (item) {
-        out.push({ a: item.a, b: item.b, groupIdx: g.groupIdx });
+        out.push({ a: item.a, b: item.b, groupIdx: g.groupIdx, round: item.round });
         madeProgress = true;
       }
     }
@@ -570,14 +570,14 @@ export default function SchedulePage() {
     }
 
     // Génération des paires
-    let sequence: Array<{ a: string; b: string; groupIdx: number }> = [];
+    let sequence: Array<{ a: string; b: string; groupIdx: number; round: number }> = [];
 
     if (t.format === "single_elimination") {
       if ((teams.length & (teams.length - 1)) !== 0) {
         return setStatus("Élimination directe: le nombre d’équipes doit être une puissance de 2 (4, 8, 16…). Utilisez le format hybride pour gérer des qualifiés ou des exemptions.");
       }
       sequence = [];
-      for (let i = 0; i < teams.length; i += 2) sequence.push({ a: teams[i].id, b: teams[i + 1].id, groupIdx: 1 });
+      for (let i = 0; i < teams.length; i += 2) sequence.push({ a: teams[i].id, b: teams[i + 1].id, groupIdx: 1, round: 1 });
     } else if (showGroups) {
       // regrouper par poule
       const groups = new Map<number, Team[]>();
@@ -599,10 +599,10 @@ export default function SchedulePage() {
       sequence = interleaveByGroups(list);
     } else {
       const pairs = roundRobinPairs(teams.map((x) => x.id));
-      sequence = pairs.map((p) => ({ a: p.a, b: p.b, groupIdx: 1 }));
+      sequence = pairs.map((p) => ({ a: p.a, b: p.b, groupIdx: 1, round: p.round }));
     }
 
-    sequence = prioritizeSimilarFirstMatches(sequence, teams, 2).map(pair => ({ ...pair, groupIdx: pair.groupIdx ?? 1 }));
+    sequence = prioritizeSimilarFirstMatches(sequence, teams, 2).map(pair => ({ ...pair, groupIdx: pair.groupIdx ?? 1, round: pair.round ?? 1 }));
 
     const mustMatches = sequence.length;
     if (mustMatches > totalPlayableSlots) {
@@ -638,6 +638,32 @@ type PlannedMatch = {
 
     const timeGroups=Array.from(new Set(allSlots.map(slot=>slot.start))).map(start=>allSlots.filter(slot=>slot.start===start));
     const baseSequence=sequence.map((pair,priority)=>({...pair,priority}));
+    function planByRounds(){
+      const scheduled:PlannedMatch[]=[]; const consecutiveUses=new Map(teams.map(team=>[team.id,0])); const lastActivityIndex=new Map(teams.map(team=>[team.id,-9999]));
+      const roundKeys=Array.from(new Set(baseSequence.map(pair=>`${pair.groupIdx}:${pair.round}`)));
+      let timeCursor=0;
+      for(const key of roundKeys){
+        const roundPairs=baseSequence.filter(pair=>`${pair.groupIdx}:${pair.round}`===key);
+        let pairCursor=0;
+        while(pairCursor<roundPairs.length){
+          const slotsAtTime=timeGroups[timeCursor];
+          if(!slotsAtTime)return{scheduled,remaining:roundPairs.slice(pairCursor),consecutiveUses};
+          const timeIndex=slotsAtTime[0]?.timeIndex??timeCursor;
+          for(const slot of slotsAtTime){
+            const chosen=roundPairs[pairCursor++]; if(!chosen)break;
+            const refereeId=chooseRestedReferee(teams.map(team=>team.id),new Set([chosen.a,chosen.b]),lastActivityIndex,timeIndex,Number(tournament.referee_rest_slots??1));
+            const group=clampInt(Number(chosen.groupIdx??1),1,groupCount);
+            scheduled.push({tournament_id:tournamentId,home_team_id:chosen.a,away_team_id:chosen.b,field_idx:slot.fieldIdx,start_time:slot.start,referee_team_id:refereeId,match_number:scheduled.length+1,stage:showGroups?"group":"league",round_label:showGroups?(groupNames[group-1]??`Poule ${group}`):`Journée ${chosen.round}`,schedule_order:scheduled.length+1});
+            lastActivityIndex.set(chosen.a,timeIndex); lastActivityIndex.set(chosen.b,timeIndex); if(refereeId)lastActivityIndex.set(refereeId,timeIndex);
+          }
+          timeCursor++;
+        }
+        // Un créneau complet est réservé entre deux rondes. Le dernier joueur
+        // de la ronde bénéficie ainsi toujours de la récupération demandée.
+        timeCursor++;
+      }
+      return{scheduled,remaining:[] as typeof baseSequence,consecutiveUses};
+    }
     function tryPlan(allowException:boolean,attempt:number){
       const remaining=[...baseSequence]; const playedCount=new Map(teams.map(team=>[team.id,0])); const consecutiveUses=new Map(teams.map(team=>[team.id,0])); const lastTimeIndex=new Map(teams.map(team=>[team.id,-9999])); const lastActivityIndex=new Map(teams.map(team=>[team.id,-9999])); const scheduled:PlannedMatch[]=[];
       for(const slotsAtTime of timeGroups){
@@ -672,9 +698,11 @@ type PlannedMatch = {
       }
       return{scheduled,remaining,consecutiveUses};
     }
-    let plan=tryPlan(false,0);
-    for(let attempt=1;plan.remaining.length&&attempt<250;attempt++){const candidate=tryPlan(false,attempt);if(candidate.remaining.length<plan.remaining.length)plan=candidate;}
-    if(plan.remaining.length)for(let attempt=0;plan.remaining.length&&attempt<500;attempt++){const candidate=tryPlan(true,attempt);if(candidate.remaining.length<plan.remaining.length)plan=candidate;}
+    let plan=tournament.format!=="single_elimination"&&groupCount===1?planByRounds():tryPlan(false,0);
+    if(!(tournament.format!=="single_elimination"&&groupCount===1)){
+      for(let attempt=1;plan.remaining.length&&attempt<250;attempt++){const candidate=tryPlan(false,attempt);if(candidate.remaining.length<plan.remaining.length)plan=candidate;}
+      if(plan.remaining.length)for(let attempt=0;plan.remaining.length&&attempt<500;attempt++){const candidate=tryPlan(true,attempt);if(candidate.remaining.length<plan.remaining.length)plan=candidate;}
+    }
     if(plan.remaining.length)return setStatus(`Planning impossible avec les horaires actuels : ${plan.remaining.length} match(s) restent à placer. L’ancien planning a été conservé.`);
     const scheduled=plan.scheduled,consecutiveUses=plan.consecutiveUses;
 
@@ -699,6 +727,44 @@ type PlannedMatch = {
       const rows = placeholders.map((match, index) => ({ tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: freeSlots[index].fieldIdx, start_time: freeSlots[index].start, match_number: match.matchNumber, stage: "knockout", round_label: match.roundLabel, home_source_label: match.homeSource, away_source_label: match.awaySource, schedule_order: scheduled.length + index + 1 }));
       const { error } = await supabase.from("matches").insert(rows);
       if (error) return setStatus("Poules créées, erreur tableau final: " + error.message);
+    } else if (t.format === "hybrid") {
+      const phaseConfig = t.bracket_config?.phase_config as { destinations?: Array<{ id: string; kind: string; label?: string; ranks?: number[]; seeds?: number[][]; consolationFinal?: boolean }> } | undefined;
+      const destinations = Array.isArray(phaseConfig?.destinations) ? phaseConfig.destinations : [];
+      const finalTable = destinations.find(destination => destination.kind === "knockout");
+      const groups = destinations.filter(destination => destination.kind === "group");
+      const seeds = Array.isArray(finalTable?.seeds) ? finalTable.seeds : [];
+      const threeTeamGroups = groups.filter(group => Array.isArray(group.ranks) && group.ranks.length === 3);
+      if (seeds.length === 2 && threeTeamGroups.length === 2) {
+        const rankLabel = (rank: number) => `${rank}${rank === 1 ? "er" : "e"} Phase 1`;
+        const specs: Array<{ number: number; stage: string; label: string; home: string; away: string; destination: string; wave: number }> = [
+          { number: 46, stage: "phase_2_knockout", label: "Demi-finale", home: rankLabel(seeds[0][0]), away: rankLabel(seeds[0][1]), destination: finalTable?.id ?? "final_table", wave: 0 },
+          { number: 47, stage: "phase_2_knockout", label: "Demi-finale", home: rankLabel(seeds[1][0]), away: rankLabel(seeds[1][1]), destination: finalTable?.id ?? "final_table", wave: 0 },
+        ];
+        threeTeamGroups.forEach((group, groupIndex) => {
+          const [a, b, c] = group.ranks!;
+          specs.push(
+            { number: groupIndex === 0 ? 48 : 51, stage: "phase_2_group", label: group.label ?? "Phase 2 · Poule", home: rankLabel(a), away: rankLabel(b), destination: group.id, wave: 1 },
+            { number: groupIndex === 0 ? 49 : 52, stage: "phase_2_group", label: group.label ?? "Phase 2 · Poule", home: rankLabel(c), away: rankLabel(a), destination: group.id, wave: 2 },
+            { number: groupIndex === 0 ? 50 : 53, stage: "phase_2_group", label: group.label ?? "Phase 2 · Poule", home: rankLabel(b), away: rankLabel(c), destination: group.id, wave: 4 },
+          );
+        });
+        specs.push(
+          { number: 54, stage: "phase_2_knockout", label: "Petite finale", home: "Perdant M46", away: "Perdant M47", destination: finalTable?.id ?? "final_table", wave: 3 },
+          { number: 55, stage: "phase_2_knockout", label: "Finale", home: "Vainqueur M46", away: "Vainqueur M47", destination: finalTable?.id ?? "final_table", wave: 3 },
+        );
+        const lastPhaseOneIndex = Math.max(...scheduled.map(match => timeIndexMap.get(match.start_time) ?? 0));
+        const transitionSlots = Math.max(1, Math.ceil(10 / slotMinutes));
+        const phaseStart = lastPhaseOneIndex + transitionSlots + 1;
+        const phaseRows = specs.map((spec, index) => {
+          const slotsAtTime = timeGroups[phaseStart + spec.wave];
+          const sameWave = specs.slice(0, index).filter(row => row.wave === spec.wave).length;
+          const slot = slotsAtTime?.[sameWave];
+          return slot ? { tournament_id: tournamentId, home_team_id: null, away_team_id: null, field_idx: slot.fieldIdx, start_time: slot.start, match_number: spec.number, stage: spec.stage, phase_key: "phase2", round_label: spec.label, home_source_label: spec.home, away_source_label: spec.away, destination_key: spec.destination, schedule_order: scheduled.length + index + 1 } : null;
+        });
+        if (phaseRows.some(row => !row)) return setStatus("Phase 1 conservée, mais les horaires ne permettent pas de placer toute la phase 2 avec 10 minutes de transition.");
+        const { error } = await supabase.from("matches").insert(phaseRows.filter(Boolean));
+        if (error) return setStatus("Phase 1 créée, erreur phase 2: " + error.message);
+      }
     }
 
     const exceptionCount=Array.from(consecutiveUses.values()).filter(value=>value>0).length;
