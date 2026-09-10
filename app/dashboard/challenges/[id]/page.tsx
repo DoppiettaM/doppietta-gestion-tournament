@@ -66,12 +66,17 @@ export default function ChallengeDashboardPage() {
     if(validate&&(home==null||away==null))return setStatus("Renseignez les deux scores avant validation.");
     const referee=match.referee_label??challenge?.referee_names?.[0]??"Arbitre 1";
     const {error}=await supabase.from("matches").update({home_score:home,away_score:away,status:validate?"played":"scheduled",referee_label:referee}).eq("id",match.id); if(error)return setStatus("Erreur score: "+error.message);
+    if(!validate&&["group","league","phase_1"].includes(match.stage??""))await supabase.from("matches").update({home_team_id:null,away_team_id:null}).eq("tournament_id",match.tournament_id).like("stage","phase_2%");
     if(validate){
       const tournamentTeams=teams.filter(t=>t.tournament_id===match.tournament_id); const tournamentMatches=matches.map(m=>m.id===match.id?{...m,home_score:home,away_score:away,status:"played"}:m).filter(m=>m.tournament_id===match.tournament_id);
       const rules=links.find(l=>l.tournament_id===match.tournament_id)?.tournament?.scoring_rules??{};
-      const phaseOne=rankPhase(tournamentTeams,tournamentMatches,match.tournament_id,rules,["group","league","phase_1"]);
-      const assignments=resolveMichelAssignments(phaseOne,tournamentMatches);
-      await Promise.all(assignments.map(row=>supabase.from("matches").update({home_team_id:row.home_team_id,away_team_id:row.away_team_id}).eq("id",row.id)));
+      const phaseOneMatches=tournamentMatches.filter(m=>["group","league","phase_1"].includes(m.stage??""));
+      const phaseOneComplete=phaseOneMatches.length>0&&phaseOneMatches.every(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null);
+      if(phaseOneComplete){
+        const phaseOne=rankPhase(tournamentTeams,tournamentMatches,match.tournament_id,rules,["group","league","phase_1"]);
+        const assignments=resolveMichelAssignments(phaseOne,tournamentMatches);
+        await Promise.all(assignments.map(row=>supabase.from("matches").update({home_team_id:row.home_team_id,away_team_id:row.away_team_id}).eq("id",row.id)));
+      }
     }
     await refresh(); setStatus(validate?"Score validé et phase suivante actualisée.":"Score enregistré en brouillon.");
   }
@@ -103,30 +108,29 @@ export default function ChallengeDashboardPage() {
     const tournamentMatches=matches.filter(m=>m.tournament_id===link.tournament_id);
     const phaseOne=tournamentMatches.filter(m=>["group","league","phase_1"].includes(m.stage??""));
     if(phaseOne.length!==45)return setStatus(`La phase 1 doit contenir exactement 45 matchs (${phaseOne.length}/45 actuellement).`);
-    if(!phaseOne.every(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null))return setStatus("Tous les résultats de la phase 1 doivent être validés avant de générer la phase 2.");
     if(tournamentMatches.some(m=>String(m.stage??"").startsWith("phase_2")))return setStatus("La phase 2 de ce tournoi existe déjà.");
     const tournamentTeams=teams.filter(team=>team.tournament_id===link.tournament_id);
-    const ranking=rankPhase(tournamentTeams,phaseOne,link.tournament_id,tournament.scoring_rules??{},["group","league","phase_1"]);
-    if(ranking.length<10)return setStatus("Le classement de phase 1 ne contient pas les 10 équipes attendues.");
-    const teamAt=(rank:number)=>ranking[rank-1]?.id??null;
+    const phaseOneComplete=phaseOne.every(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null);
     const definitions=[
-      {n:46,round:0,home:teamAt(1),away:teamAt(4),h:"1er de la phase 1",a:"4e de la phase 1",stage:"phase_2_knockout",destination:"final_table",label:"Demi-finale"},
-      {n:47,round:0,home:teamAt(2),away:teamAt(3),h:"2e de la phase 1",a:"3e de la phase 1",stage:"phase_2_knockout",destination:"final_table",label:"Demi-finale"},
-      {n:48,round:1,home:teamAt(5),away:teamAt(6),h:"5e de la phase 1",a:"6e de la phase 1",stage:"phase_2_group_a",destination:"group_a",label:"Poule places 5 à 7"},
-      {n:51,round:1,home:teamAt(8),away:teamAt(9),h:"8e de la phase 1",a:"9e de la phase 1",stage:"phase_2_group_b",destination:"group_b",label:"Poule places 8 à 10"},
-      {n:49,round:2,home:teamAt(7),away:teamAt(5),h:"7e de la phase 1",a:"5e de la phase 1",stage:"phase_2_group_a",destination:"group_a",label:"Poule places 5 à 7"},
-      {n:52,round:2,home:teamAt(10),away:teamAt(8),h:"10e de la phase 1",a:"8e de la phase 1",stage:"phase_2_group_b",destination:"group_b",label:"Poule places 8 à 10"},
-      {n:50,round:3,home:teamAt(6),away:teamAt(7),h:"6e de la phase 1",a:"7e de la phase 1",stage:"phase_2_group_a",destination:"group_a",label:"Poule places 5 à 7"},
-      {n:53,round:3,home:teamAt(9),away:teamAt(10),h:"9e de la phase 1",a:"10e de la phase 1",stage:"phase_2_group_b",destination:"group_b",label:"Poule places 8 à 10"},
-      {n:54,round:4,home:null,away:null,h:"Perdant M46",a:"Perdant M47",stage:"phase_2_knockout",destination:"final_table",label:"Petite finale"},
-      {n:55,round:4,home:null,away:null,h:"Vainqueur M46",a:"Vainqueur M47",stage:"phase_2_knockout",destination:"final_table",label:"Finale"},
+      {n:46,round:0,home:null,away:null,h:"1er Phase 1",a:"4e Phase 1",stage:"phase_2_knockout",destination:"final_table",label:"Demi-finale"},
+      {n:47,round:0,home:null,away:null,h:"2e Phase 1",a:"3e Phase 1",stage:"phase_2_knockout",destination:"final_table",label:"Demi-finale"},
+      {n:48,round:1,home:null,away:null,h:"5e Phase 1",a:"6e Phase 1",stage:"phase_2_group_a",destination:"group_a",label:"Poule places 5 à 7"},
+      {n:51,round:1,home:null,away:null,h:"8e Phase 1",a:"9e Phase 1",stage:"phase_2_group_b",destination:"group_b",label:"Poule places 8 à 10"},
+      {n:49,round:3,home:null,away:null,h:"7e Phase 1",a:"5e Phase 1",stage:"phase_2_group_a",destination:"group_a",label:"Poule places 5 à 7"},
+      {n:52,round:3,home:null,away:null,h:"10e Phase 1",a:"8e Phase 1",stage:"phase_2_group_b",destination:"group_b",label:"Poule places 8 à 10"},
+      {n:50,round:5,home:null,away:null,h:"6e Phase 1",a:"7e Phase 1",stage:"phase_2_group_a",destination:"group_a",label:"Poule places 5 à 7"},
+      {n:53,round:5,home:null,away:null,h:"9e Phase 1",a:"10e Phase 1",stage:"phase_2_group_b",destination:"group_b",label:"Poule places 8 à 10"},
+      {n:54,round:2,home:null,away:null,h:"Perdant M46",a:"Perdant M47",stage:"phase_2_knockout",destination:"final_table",label:"Petite finale"},
+      {n:55,round:2,home:null,away:null,h:"Vainqueur M46",a:"Vainqueur M47",stage:"phase_2_knockout",destination:"final_table",label:"Finale"},
     ];
     const slot=Math.max(1,Number(tournament.match_duration_min??12)+Number(tournament.rotation_duration_min??0));
     const lastPhaseOne=Math.max(...phaseOne.map(m=>toMinutes(m.start_time)));
+    const earliestPhaseTwo=lastPhaseOne+Number(tournament.match_duration_min??12)+10;
+    const tournamentStart=toMinutes(tournament.start_time);
     const occupied=new Set(matches.map(m=>`${String(m.start_time).slice(0,5)}|${m.field_idx}`));
     const roundSlots=new Map<number,Array<{time:string;field:number}>>();
-    let cursor=lastPhaseOne+slot;
-    for(let round=0;round<5;round++){
+    let cursor=tournamentStart+Math.ceil((earliestPhaseTwo-tournamentStart)/slot)*slot;
+    for(let round=0;round<6;round++){
       let found:Array<{time:string;field:number}>=[];
       while(cursor<=toMinutes(tournament.end_time)){
         const time=toTime(cursor);
@@ -134,14 +138,20 @@ export default function ChallengeDashboardPage() {
         if(found.length===2)break;
         cursor+=slot;
       }
-      if(found.length<2)return setStatus("Pas assez de créneaux libres pour placer les cinq tours de la phase 2.");
+      if(found.length<2)return setStatus("Pas assez de créneaux libres pour placer la phase 2 avec 10 minutes de transition et le repos obligatoire.");
       roundSlots.set(round,found); found.forEach(s=>occupied.add(`${s.time}|${s.field}`)); cursor+=slot;
     }
     const counters=new Map<number,number>();
     const rows=definitions.map(def=>{const index=counters.get(def.round)??0;counters.set(def.round,index+1);const position=roundSlots.get(def.round)![index];return{tournament_id:link.tournament_id,home_team_id:def.home,away_team_id:def.away,field_idx:position.field,start_time:position.time,match_number:def.n,stage:def.stage,phase_key:"phase_2",destination_key:def.destination,round_label:def.label,home_source_label:def.h,away_source_label:def.a,schedule_order:def.n,referee_label:null,referee_team_id:null}});
     const {error}=await supabase.from("matches").insert(rows);
     if(error)return setStatus("Erreur de génération de la phase 2 : "+error.message);
-    await refresh();setStatus("Phase 2 générée : demi-finales, poules 5–7 et 8–10, petite finale et finale.");
+    if(phaseOneComplete){
+      const ranking=rankPhase(tournamentTeams,phaseOne,link.tournament_id,tournament.scoring_rules??{},["group","league","phase_1"]);
+      const {data:inserted}=await supabase.from("matches").select("id,tournament_id,match_number,stage,start_time,field_idx,referee_label,home_team_id,away_team_id,home_source_label,away_source_label,home_score,away_score,status").eq("tournament_id",link.tournament_id).gte("match_number",46).lte("match_number",55);
+      const assignments=resolveMichelAssignments(ranking,(inserted??[]) as Match[]);
+      await Promise.all(assignments.map(row=>supabase.from("matches").update({home_team_id:row.home_team_id,away_team_id:row.away_team_id}).eq("id",row.id)));
+    }
+    await refresh();setStatus("Phase 2 préparée et visible : les références seront remplacées automatiquement par les équipes après le dernier résultat de phase 1.");
   }
 
   const challengeFinalReady=links.length>0&&links.every(link=>{const phaseTwo=matches.filter(m=>m.tournament_id===link.tournament_id&&String(m.stage??"").startsWith("phase_2"));return phaseTwo.length===10&&phaseTwo.every(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null)});
@@ -152,7 +162,7 @@ export default function ChallengeDashboardPage() {
     <section className="grid lg:grid-cols-3 gap-4"><div className="lg:col-span-2 bg-white rounded-2xl shadow p-6"><div className="flex justify-between mb-4 gap-3 flex-wrap"><div><h2 className="font-black text-xl">Classement général</h2><span className="text-sm text-gray-500">{standings.length} clubs</span></div><button disabled={!challengeFinalReady&&!challenge?.publish_standings} onClick={()=>challenge&&setStandingsPublication("challenge",challenge.id,!challenge.publish_standings)} className={`rounded-xl px-4 py-2 text-sm font-black disabled:cursor-not-allowed disabled:opacity-45 ${challenge?.publish_standings?"bg-emerald-600 text-white":"bg-slate-200 text-slate-700"}`}>{challenge?.publish_standings?"Publié sur l’écran":challengeFinalReady?"Publier le classement du challenge":"Publication après les deux phases 2"}</button></div><div className="overflow-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-gray-500"><th className="p-2">#</th><th>Nom challenge</th><th>Score</th><th>Tournois</th><th>Pts matchs</th><th>BP</th><th>BC</th><th>Diff.</th></tr></thead><tbody>{standings.map((row, i) => <tr key={row.name} className="border-b"><td className="p-2 font-black">{i + 1}</td><td className="font-bold">{row.name}<small className="block font-normal text-gray-400">{row.details.map(d => `${d.teamName}: ${d.score}`).join(" · ")}</small></td><td className="font-black text-amber-600">{row.score}</td><td>{row.tournamentsPlayed}</td><td>{row.tournamentPoints}</td><td>{row.goalsFor}</td><td>{row.goalsAgainst}</td><td>{row.goalDifference}</td></tr>)}</tbody></table>{!status && standings.length === 0 && <p className="text-gray-500 py-8 text-center">Ajoutez aux équipes un « nom d’équipe pour le challenge » et validez des matchs pour alimenter le classement.</p>}</div></div>
       <aside className="bg-white rounded-2xl shadow p-6"><h2 className="font-black text-xl mb-3">Règlement</h2><p className="text-sm font-semibold">Départage dans l’ordre :</p><ol className="mt-2 space-y-2">{challenge?.tie_breakers.map((rule, i) => <li key={rule} className="bg-slate-50 rounded-xl p-3"><strong>{i + 1}.</strong> {TIE_BREAKER_LABELS[rule]}</li>)}</ol></aside></section>
     <section className="bg-white rounded-2xl shadow p-6"><h2 className="font-black text-xl mb-4">Tournois du challenge ({links.length}/6)</h2><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{links.map(link => <button key={link.tournament_id} onClick={() => router.push(`/dashboard/tournaments/${link.tournament_id}`)} className="border rounded-xl p-4 text-left hover:border-amber-400"><span className="text-xs text-gray-400">TOURNOI {link.position}</span><strong className="block mt-1">{link.tournament?.title ?? link.tournament_id}</strong><small className="text-gray-500">{link.tournament?.tournament_date ?? "Date non définie"}</small></button>)}</div></section>
-    <section className="bg-white rounded-2xl shadow p-6"><div className="mb-4"><h2 className="font-black text-xl">Passage en phase 2 et publication</h2><p className="text-sm text-gray-500">La génération devient disponible uniquement lorsque les 45 scores de phase 1 sont validés.</p></div><div className="grid gap-3 md:grid-cols-2">{links.map(link=>{const phaseOne=matches.filter(m=>m.tournament_id===link.tournament_id&&["group","league","phase_1"].includes(m.stage??""));const completed=phaseOne.length===45&&phaseOne.every(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null);const generated=matches.some(m=>m.tournament_id===link.tournament_id&&String(m.stage??"").startsWith("phase_2"));return <article key={link.tournament_id} className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><strong className="text-lg">{link.tournament?.display_label??link.tournament?.title}</strong><p className="text-xs text-gray-500">Phase 1 : {phaseOne.filter(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null).length}/45 résultats</p></div><button onClick={()=>setStandingsPublication("tournament",link.tournament_id,!link.tournament?.publish_standings)} className={`rounded-lg px-3 py-2 text-xs font-black ${link.tournament?.publish_standings?"bg-emerald-600 text-white":"bg-slate-200"}`}>{link.tournament?.publish_standings?"Classement publié":"Publier le classement"}</button></div><button disabled={!completed||generated} onClick={()=>generateMichelPhaseTwo(link)} className="mt-4 w-full rounded-lg bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400">{generated?"Phase 2 déjà générée":completed?"Générer la phase 2":"En attente de tous les résultats"}</button></article>})}</div></section>
+    <section className="bg-white rounded-2xl shadow p-6"><div className="mb-4"><h2 className="font-black text-xl">Préparation de la phase 2 et publication</h2><p className="text-sm text-gray-500">Les rencontres de phase 2 peuvent être affichées immédiatement avec leurs références. Les noms réels remplacent automatiquement ces références après le dernier résultat de phase 1.</p></div><div className="grid gap-3 md:grid-cols-2">{links.map(link=>{const phaseOne=matches.filter(m=>m.tournament_id===link.tournament_id&&["group","league","phase_1"].includes(m.stage??""));const generated=matches.some(m=>m.tournament_id===link.tournament_id&&String(m.stage??"").startsWith("phase_2"));return <article key={link.tournament_id} className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><strong className="text-lg">{link.tournament?.display_label??link.tournament?.title}</strong><p className="text-xs text-gray-500">Phase 1 : {phaseOne.filter(m=>m.status==="played"&&m.home_score!=null&&m.away_score!=null).length}/45 résultats</p></div><button onClick={()=>setStandingsPublication("tournament",link.tournament_id,!link.tournament?.publish_standings)} className={`rounded-lg px-3 py-2 text-xs font-black ${link.tournament?.publish_standings?"bg-emerald-600 text-white":"bg-slate-200"}`}>{link.tournament?.publish_standings?"Classement publié":"Publier le classement"}</button></div><button disabled={generated||phaseOne.length!==45} onClick={()=>generateMichelPhaseTwo(link)} className="mt-4 w-full rounded-lg bg-amber-400 px-4 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400">{generated?"Phase 2 visible dans le planning":phaseOne.length===45?"Préparer et afficher la phase 2":"Phase 1 incomplète"}</button></article>})}</div></section>
     <section className="bg-white rounded-2xl shadow p-6 space-y-4"><div><h2 className="font-black text-xl">Régie des scores du challenge</h2><p className="text-sm text-gray-500">Saisissez et validez ici les scores des deux tournois. La validation déplace immédiatement le match dans « matchs réalisés » sur l’écran public et actualise les reversements de phase 2.</p></div><div className="space-y-3">{matches.map(match=>{const tournament=links.find(l=>l.tournament_id===match.tournament_id)?.tournament;const edit=scores[match.id]??{home:"",away:""};return <article key={match.id} className={`grid gap-3 rounded-xl border p-4 lg:grid-cols-[110px_1fr_190px_170px] ${match.status==="played"?"bg-emerald-50 border-emerald-200":""}`}><div><strong>M{match.match_number??"—"} · {String(match.start_time).slice(0,5)}</strong><small className="block text-gray-500">{tournament?.display_label??tournament?.title} · {challenge?.field_names?.[match.field_idx-1]??`Terrain ${match.field_idx}`}</small></div><div className="grid grid-cols-[1fr_64px_20px_64px_1fr] items-center gap-2 text-center"><strong className="break-words text-right">{teamName(match.home_team_id,match.home_source_label)}</strong><input type="number" min={0} className="rounded-lg border p-2 text-center font-black" value={edit.home} onChange={e=>setScores(p=>({...p,[match.id]:{...edit,home:e.target.value}}))}/><span>–</span><input type="number" min={0} className="rounded-lg border p-2 text-center font-black" value={edit.away} onChange={e=>setScores(p=>({...p,[match.id]:{...edit,away:e.target.value}}))}/><strong className="break-words text-left">{teamName(match.away_team_id,match.away_source_label)}</strong></div><select className="rounded-lg border p-2" value={match.referee_label??""} onChange={e=>changeReferee(match.id,e.target.value)}><option value="">Arbitre à attribuer</option>{(challenge?.referee_names??[]).map(name=><option key={name}>{name}</option>)}</select><div className="flex gap-2"><button onClick={()=>saveMatch(match,false)} className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-bold">Brouillon</button><button onClick={()=>saveMatch(match,match.status!=="played")} className={`rounded-lg px-3 py-2 text-sm font-black ${match.status==="played"?"bg-amber-200":"bg-emerald-600 text-white"}`}>{match.status==="played"?"Rouvrir":"Valider"}</button></div></article>})}</div></section>
   </div></main>;
 }
