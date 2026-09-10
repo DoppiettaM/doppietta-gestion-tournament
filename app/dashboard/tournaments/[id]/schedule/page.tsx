@@ -635,11 +635,13 @@ const fieldUsage = new Map<number, number>(); // équilibrage terrain
 // ✅ Comptage matchs joués (global + par poule)
 const playedCount = new Map<string, number>();
 const playedCountByGroup = new Map<number, Map<string, number>>();
+const consecutiveUses = new Map<string, number>();
 
 for (const tm of teams) {
   const g = clampInt(Number(tm.group_idx ?? 1), 1, groupCount);
 
   playedCount.set(tm.id, 0);
+  consecutiveUses.set(tm.id, 0);
   lastTimeIndex.set(tm.id, -9999);
   lastActivityIndex.set(tm.id, -9999);
 
@@ -704,9 +706,9 @@ for (const slot of allSlots) {
   const busySet = busyAtTime.get(timeKey)!;
 
   let chosenIndex = -1;
-  let bestIndex = -1;
-  let bestScore = Number.POSITIVE_INFINITY;
-
+  for (const allowConsecutive of [false, true]) {
+    let bestIndex = -1;
+    let bestScore = Number.POSITIVE_INFINITY;
     const window = 180;
     const endPtr = Math.min(sequence.length, ptr + window);
 
@@ -718,8 +720,11 @@ for (const slot of allSlots) {
 
       if (busySet.has(a) || busySet.has(b)) continue;
 
-      // Anti-enchaînement immuable : un créneau entier sans jouer.
-      if (!restOkStrict(a, slot.timeIndex) || !restOkStrict(b, slot.timeIndex)) continue;
+      const consecutiveA = !restOkStrict(a, slot.timeIndex);
+      const consecutiveB = !restOkStrict(b, slot.timeIndex);
+      if ((consecutiveA || consecutiveB) && !allowConsecutive) continue;
+      if (consecutiveA && (consecutiveUses.get(a) ?? 0) >= 1) continue;
+      if (consecutiveB && (consecutiveUses.get(b) ?? 0) >= 1) continue;
 
       // Équité globale stricte: max-min <= 1
       const gg = minMaxGlobalAfter(a, b);
@@ -739,15 +744,15 @@ for (const slot of allSlots) {
       const cb = playedCount.get(b) ?? 0;
       const lowPlayedBonus = (ca + cb) * 0.5;
 
-      const score = fieldPenalty + orderPenalty + lowPlayedBonus;
+      const score = fieldPenalty + orderPenalty + lowPlayedBonus + (consecutiveA || consecutiveB ? 10000 : 0);
 
       if (score < bestScore) {
         bestScore = score;
         bestIndex = i;
       }
     }
-
-  chosenIndex = bestIndex;
+    if (bestIndex !== -1) { chosenIndex = bestIndex; break; }
+  }
 
   if (chosenIndex === -1) continue;
 
@@ -772,6 +777,8 @@ for (const slot of allSlots) {
   busySet.add(chosen.a);
   busySet.add(chosen.b);
 
+  if (!restOkStrict(chosen.a, slot.timeIndex)) consecutiveUses.set(chosen.a, (consecutiveUses.get(chosen.a) ?? 0) + 1);
+  if (!restOkStrict(chosen.b, slot.timeIndex)) consecutiveUses.set(chosen.b, (consecutiveUses.get(chosen.b) ?? 0) + 1);
   lastTimeIndex.set(chosen.a, slot.timeIndex);
   lastTimeIndex.set(chosen.b, slot.timeIndex);
   lastActivityIndex.set(chosen.a, slot.timeIndex);
@@ -792,7 +799,7 @@ for (const slot of allSlots) {
   ptr++;
 }
 
-if (ptr < sequence.length) return setStatus(`Planning impossible sans enfreindre le repos obligatoire : ${sequence.length-ptr} match(s) restent à placer. Ajoutez des créneaux horaires ; aucun enchaînement ne sera créé.`);
+if (ptr < sequence.length) return setStatus(`Planning impossible sans dépasser l’unique exception d’enchaînement autorisée par équipe : ${sequence.length-ptr} match(s) restent à placer.`);
 
     // Insert par chunk
     const chunkSize = 200;
@@ -813,7 +820,8 @@ if (ptr < sequence.length) return setStatus(`Planning impossible sans enfreindre
       if (error) return setStatus("Poules créées, erreur tableau final: " + error.message);
     }
 
-    setStatus(`OK ✅ Matchs générés: ${scheduled.length}.`);
+    const exceptionCount=Array.from(consecutiveUses.values()).filter(value=>value>0).length;
+    setStatus(`OK ✅ Matchs générés: ${scheduled.length}. ${exceptionCount} équipe(s) utilisent leur unique exception d’enchaînement.`);
     await refreshMatches();
   }
 
