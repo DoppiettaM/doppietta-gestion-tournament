@@ -28,6 +28,18 @@ function isTournamentPaused(tournament: Tournament | undefined, fieldIdx: number
   return Array.isArray(fieldPauses) && fieldPauses.some(pause => pause?.from && pause?.to && overlaps(start, end, minutes(pause.from), minutes(pause.to)));
 }
 
+function tournamentPausedUntil(tournament: Tournament | undefined, fieldIdx: number, startTime: number) {
+  if (!tournament) return null;
+  const end = startTime + Math.max(1, tournament.match_duration_min + tournament.rotation_duration_min); const endings:number[]=[];
+  for (const pause of Array.isArray(tournament.pauses) ? tournament.pauses : []) {
+    if (!pause?.from || !pause?.to || !overlaps(startTime,end,minutes(pause.from),minutes(pause.to))) continue;
+    if (pause.type === "tournament_except" && Array.isArray(pause.exceptFields) && pause.exceptFields.includes(fieldIdx)) continue;
+    if (!pause.type || pause.type === "tournament" || pause.type === "tournament_except") endings.push(minutes(pause.to));
+  }
+  for(const pause of tournament.field_pauses?.[String(fieldIdx)]??[]) if(pause?.from&&pause?.to&&overlaps(startTime,end,minutes(pause.from),minutes(pause.to))) endings.push(minutes(pause.to));
+  return endings.length?Math.max(...endings):null;
+}
+
 export default function SharedChallengeSchedulePage() {
   const router = useRouter(); const challengeId = String(useParams().id);
   const [title, setTitle] = useState("Challenge"); const [shared, setShared] = useState(false); const [challengeFields, setChallengeFields] = useState<string[]>([]); const [referees, setReferees] = useState<string[]>([]); const [rules, setRules] = useState<SchedulingRules>({max_match_count_gap:1,min_rest_slots:1,prevent_simultaneous:true,rest_policy:"one_exception_per_day",max_consecutive_exceptions:1,phase_transition_min:10}); const [tournaments, setTournaments] = useState<Tournament[]>([]); const [teams, setTeams] = useState<Team[]>([]); const [matches, setMatches] = useState<Match[]>([]); const [status, setStatus] = useState("Chargement...");
@@ -71,7 +83,13 @@ export default function SharedChallengeSchedulePage() {
     if (!shared || !tournaments.length) return setStatus("Activez d’abord « terrains et ressources partagés » dans le challenge.");
     if (!window.confirm("Réorganiser tous les matchs du challenge sur un planning commun sans conflit de terrain ?")) return;
     const start = Math.min(...tournaments.map(t => minutes(t.start_time))); const end = Math.max(...tournaments.map(t => minutes(t.end_time))); const slot = Math.max(...tournaments.map(t => t.match_duration_min + t.rotation_duration_min)); const fields = challengeFields.length || Math.max(...tournaments.map(t => t.num_fields));
-    const slots: Array<{ start_time: string; field_idx: number }> = []; for (let time = start; time + slot <= end; time += slot) for (let field = 1; field <= fields; field++) slots.push({ start_time: asTime(time), field_idx: field });
+    const slots: Array<{ start_time: string; field_idx: number }> = [];
+    for(let time=start;time+slot<=end;){
+      const pauseEnds=tournaments.flatMap(tournament=>Array.from({length:fields},(_,index)=>tournamentPausedUntil(tournament,index+1,time)));
+      if(pauseEnds.length&&pauseEnds.every(value=>value!==null)){time=Math.min(...pauseEnds.map(value=>value??time));continue;}
+      for(let field=1;field<=fields;field++)slots.push({start_time:asTime(time),field_idx:field});
+      time+=slot;
+    }
     if (matches.length > slots.length) return setStatus(`Planning impossible: ${matches.length} matchs pour ${slots.length} créneaux communs.`);
     const ordered = [...matches].sort((a, b) => minutes(a.start_time) - minutes(b.start_time));
     const teamIds = teams.map(team=>team.id); const maxGap = 1; const minRest = Math.max(1,Number(rules.min_rest_slots??1));
