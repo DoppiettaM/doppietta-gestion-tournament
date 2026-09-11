@@ -48,19 +48,20 @@ export default function TournamentsPage() {
         router.push("/login");
         return;
       }
-      await refresh();
+      await refresh(userData.user.id);
     }
     boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  async function refresh() {
+  async function refresh(userId?: string) {
     setLoading(true);
     setStatus("");
 
     const { data, error } = await supabase
       .from("tournaments")
       .select("id,title,tournament_date,start_time,end_time,created_at,max_teams,num_fields")
+      .eq("user_id", userId ?? (await supabase.auth.getUser()).data.user?.id ?? "")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -189,7 +190,7 @@ export default function TournamentsPage() {
             </button>
 
             <button
-              onClick={refresh}
+              onClick={() => refresh()}
               className="bg-gray-200 px-4 py-2 rounded-lg hover:bg-gray-300 transition"
               title="Rafraîchir"
             >
