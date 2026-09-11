@@ -23,7 +23,7 @@ export default function CreateChallengePage() {
   useEffect(() => { (async () => {
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) return router.push("/login");
-    const { data, error } = await supabase.from("tournaments").select("id,title,tournament_date").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("tournaments").select("id,title,tournament_date").eq("user_id", auth.user.id).order("created_at", { ascending: false });
     if (error) setStatus("Erreur: " + error.message); else setTournaments((data ?? []) as Tournament[]);
   })(); }, [router]);
 
