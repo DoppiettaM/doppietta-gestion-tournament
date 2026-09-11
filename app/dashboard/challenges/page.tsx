@@ -12,15 +12,15 @@ export default function ChallengesPage() {
   const [rows, setRows] = useState<Challenge[]>([]);
   const [status, setStatus] = useState("Chargement...");
 
-  async function refresh() {
-    const { data, error } = await supabase.from("challenges").select("id,title,scoring_mode,shared_resources,created_at").order("created_at", { ascending: false });
+  async function refresh(userId: string) {
+    const { data, error } = await supabase.from("challenges").select("id,title,scoring_mode,shared_resources,created_at").eq("user_id", userId).order("created_at", { ascending: false });
     if (error) return setStatus("Erreur: " + error.message + " — appliquez d’abord la migration Supabase challenges.");
     setRows((data ?? []) as Challenge[]);
     setStatus("");
   }
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => data.user ? refresh() : router.push("/login"));
+    supabase.auth.getUser().then(({ data }) => data.user ? refresh(data.user.id) : router.push("/login"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
@@ -44,4 +44,3 @@ export default function ChallengesPage() {
     </div>
   </main>;
 }
-
